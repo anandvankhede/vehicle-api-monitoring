@@ -8,16 +8,21 @@
 .env
 .env.local
 .env.*.local
+backend/.env.docker
+
+# Backend
 backend/.env
+
+# Frontend (Vite) — create from frontend/.env.example; never commit real URLs/secrets
+frontend/.env
 frontend/.env.local
 frontend/.env.*.local
-
-# Keep templates — these are safe to commit
-!.env.example
-!**/.env.example
-
 frontend/.env.development
 frontend/.env.production
+
+# Keep templates — safe to commit
+!.env.example
+!**/.env.example
 
 # -----------------------------------------------------------------------------
 # Python / FastAPI backend

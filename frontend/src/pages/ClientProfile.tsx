@@ -28,7 +28,7 @@ export const ClientProfile: React.FC = () => {
         if (cancelled) return;
 
         const clientId = refreshed?.id ?? client.id;
-        const access = await clientService.getClientApiAccessAsync(refreshed.id, 'client');
+        const access = await clientService.getClientApiAccessAsync(clientId, 'client');
         if (cancelled) return;
 
         setActiveApiNames(access.filter((a) => a.status === 'Active').map((a) => a.api_name));
