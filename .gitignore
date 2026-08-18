@@ -1,0 +1,172 @@
+# =============================================================================
+# Vehicle API Monitoring — Git ignore
+# =============================================================================
+
+# -----------------------------------------------------------------------------
+# Secrets & environment (NEVER commit credentials)
+# -----------------------------------------------------------------------------
+.env
+.env.local
+.env.*.local
+backend/.env
+frontend/.env.local
+frontend/.env.*.local
+
+# Keep templates — these are safe to commit
+!.env.example
+!**/.env.example
+
+frontend/.env.development
+frontend/.env.production
+
+# -----------------------------------------------------------------------------
+# Python / FastAPI backend
+# -----------------------------------------------------------------------------
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+MANIFEST
+
+# Virtual environments
+.venv/
+venv/
+env/
+ENV/
+
+# Test / type / lint caches
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+.coverage.*
+htmlcov/
+.tox/
+.nox/
+.hypothesis/
+
+# -----------------------------------------------------------------------------
+# Node.js / Vite / React frontend
+# -----------------------------------------------------------------------------
+node_modules/
+frontend/node_modules/
+dist/
+frontend/dist/
+dist-ssr/
+*.local
+
+# Vite cache
+.vite/
+frontend/.vite/
+frontend/node_modules/.vite/
+
+# TypeScript build info
+*.tsbuildinfo
+frontend/node_modules/.tmp/
+
+# -----------------------------------------------------------------------------
+# Logs & runtime output
+# -----------------------------------------------------------------------------
+logs/
+*.log
+/_*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+lerna-debug.log*
+backend/uvicorn_*.log
+frontend/vite_out.log
+frontend/build_log.txt
+
+# -----------------------------------------------------------------------------
+# IDE & editor
+# -----------------------------------------------------------------------------
+.vscode/*
+!.vscode/extensions.json
+!.vscode/settings.json.example
+.idea/
+*.suo
+*.ntvs*
+*.njsproj
+*.sln
+*.sw?
+*.swp
+*.swo
+*~
+.project
+.classpath
+.settings/
+*.iml
+
+# Cursor / Continue (local AI tooling)
+.continue/
+.cursor/
+
+# -----------------------------------------------------------------------------
+# OS files
+# -----------------------------------------------------------------------------
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
+Thumbs.db
+Desktop.ini
+
+# -----------------------------------------------------------------------------
+# Database dumps & local data
+# -----------------------------------------------------------------------------
+dump/
+*.bson
+*.dump
+data/db/
+mongo-data/
+
+# -----------------------------------------------------------------------------
+# Ad-hoc dev / diagnostic scripts (not part of the app)
+# -----------------------------------------------------------------------------
+backend/_diag_*.py
+backend/_test_*.py
+backend/_*.txt
+backend/_*.mongodb.js
+backend/test_api.py
+backend/test_db.py
+
+# Root-level scratch (app lives in backend/ + frontend/ only)
+/src/
+/create_docs.py
+/query
+/getfile.txt
+/inish.txt
+/test.txt
+
+# -----------------------------------------------------------------------------
+# Misc build / package artifacts
+# -----------------------------------------------------------------------------
+*.tar.gz
+*.zip
+*.7z
+.cache/
+.parcel-cache/
+.turbo/
+coverage/
+.nyc_output/
+storybook-static/

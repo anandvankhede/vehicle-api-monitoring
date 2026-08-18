@@ -1,0 +1,138 @@
+"""
+Vehicle API Monitoring — FastAPI Application Entry Point
+========================================================
+
+This is the main application file. It creates the FastAPI app,
+registers all routers, configures CORS, and sets up the database
+connection lifecycle (connect on startup, close on shutdown).
+
+Run with:
+    uvicorn app.main:app --reload
+"""
+
+from fastapi import FastAPI
+from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import JSONResponse
+
+from app.config import settings
+from app.database import db_manager, ensure_indexes
+from app.routers import (
+    auth,
+    client,
+    client_user,
+    api_request,
+    api_access,
+    api_info,
+    dashboard,
+    report,
+    analytics,
+    settings as settings_router,
+    activity,
+    audit_log,
+)
+
+# ============================================================================
+# FastAPI Application Instance
+# ============================================================================
+
+app = FastAPI(
+    title="Vehicle API Monitoring System",
+    description="""
+    Backend API for the Vehicle API Monitoring dashboard.
+    
+    Features:
+        - Admin & Client authentication (JWT)
+        - Client company management
+        - API access request & approval workflow
+        - API key generation & rotation
+        - Usage tracking & billing
+        - Dashboard analytics
+        - Usage reports & invoice generation
+    """,
+    version="1.0.0",
+    docs_url="/docs",
+    redoc_url="/redoc",
+)
+
+# ============================================================================
+# CORS Configuration
+# ============================================================================
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=settings.FRONTEND_ORIGINS,
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
+# ============================================================================
+# Root Endpoint
+# ============================================================================
+
+@app.get("/")
+async def root():
+    """
+    Health check endpoint — verifies the server is running.
+    """
+    return {
+        "status": "ok",
+        "service": "Vehicle API Monitoring",
+        "version": "1.0.0",
+        "docs": "/docs",
+    }
+
+
+@app.get("/health")
+async def health_check():
+    """
+    Health check endpoint — verifies DB connectivity.
+    """
+    try:
+        db = db_manager.get_db()
+        await db.command("ping")
+        return {"status": "healthy", "database": "connected"}
+    except Exception:
+        return JSONResponse(
+            status_code=503,
+            content={"status": "unhealthy", "database": "disconnected"},
+        )
+
+
+# ============================================================================
+# Router Registration
+# ============================================================================
+
+# All API routes are prefixed with /api to match the frontend's API_BASE_URL
+app.include_router(auth.router, prefix="/api")
+app.include_router(client.router, prefix="/api")
+app.include_router(client_user.router, prefix="/api")
+app.include_router(api_request.router, prefix="/api")
+app.include_router(api_access.router, prefix="/api")
+app.include_router(api_info.router, prefix="/api")
+app.include_router(dashboard.router, prefix="/api")
+app.include_router(report.router, prefix="/api")
+app.include_router(analytics.router, prefix="/api")
+app.include_router(settings_router.router, prefix="/api")
+app.include_router(activity.router, prefix="/api")
+app.include_router(audit_log.router, prefix="/api")
+
+
+# ============================================================================
+# Lifecycle Events
+# ============================================================================
+
+@app.on_event("startup")
+async def startup():
+    """Connect to MongoDB on startup and ensure analytics indexes."""
+    db_manager.connect()
+    try:
+        await ensure_indexes(db_manager.get_db())
+    except Exception as exc:  # pragma: no cover - non-fatal
+        print(f"[WARN] Index setup warning: {exc}")
+
+
+@app.on_event("shutdown")
+async def shutdown():
+    """Close MongoDB connection on shutdown."""
+    db_manager.close()
