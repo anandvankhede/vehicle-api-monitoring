@@ -242,8 +242,8 @@ export const ApiMonitoringSection: React.FC<ApiMonitoringSectionProps> = ({
             {apis.length === 0
               ? apisLoadError
                 ?? (responseDbAvailable === false
-                  ? 'The API catalog is empty and the response database is not connected. Set RESPONSE_MONGO_URL on the server and restart the backend to bootstrap APIs.'
-                  : 'The API catalog is empty. Restart the backend after deploy, or add APIs under API Management.')
+                  ? 'Response database is not connected. Configure RESPONSE_MONGO_URL on the server.'
+                  : 'No APIs available for the selected user filter.')
               : 'Choose an API from the dropdown above to view its request telemetry and health.'}
           </p>
           {apis.length === 0 && onReloadApis && (

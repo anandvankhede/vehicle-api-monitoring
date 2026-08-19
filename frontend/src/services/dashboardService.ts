@@ -111,10 +111,10 @@ export const dashboardService = {
   },
 
   /**
-   * Fetch list of available APIs for Main API Monitoring section.
-   * Prefer the dashboard endpoint (active APIs only); fall back to the catalog.
+   * Fetch APIs for Main API Monitoring — scoped by user filter.
+   * All users: every PAN API. Specific client: that client's assigned APIs.
    */
-  async getAvailableApis(): Promise<ApiOption[]> {
+  async getAvailableApis(clientId: string = 'all'): Promise<ApiOption[]> {
     const toOption = (a: { id: string; name: string; category?: string }): ApiOption => ({
       id: a.id,
       name: a.name,
@@ -128,33 +128,16 @@ export const dashboardService = {
             Boolean(item && typeof item === 'object' && 'id' in item && 'name' in item))
           .map(toOption);
       }
-      if (raw && typeof raw === 'object' && 'data' in raw && Array.isArray((raw as { data: unknown }).data)) {
-        return normalizeList((raw as { data: unknown }).data);
-      }
       return [];
     };
 
     try {
-      const dashboardApis = await api.getDashboardApis();
-      const options = normalizeList(dashboardApis);
-      if (options.length > 0) {
-        return options;
-      }
+      const dashboardApis = await api.getDashboardApis(clientId);
+      return normalizeList(dashboardApis);
     } catch (err) {
-      console.warn('Failed to load dashboard APIs, falling back to catalog:', err);
+      console.warn('Failed to load scoped dashboard APIs:', err);
+      return [];
     }
-
-    try {
-      const result = await api.getApiInfo();
-      const options = normalizeList(result);
-      if (options.length > 0) {
-        return options;
-      }
-    } catch (err) {
-      console.warn('Failed to load API catalog:', err);
-    }
-
-    return [];
   },
 
   /**
@@ -164,9 +147,10 @@ export const dashboardService = {
     apiId: string = '',
     timeFilter: ApiTimeFilterValue = 'last_7_days',
     startDate?: string,
-    endDate?: string
+    endDate?: string,
+    clientId: string = 'all',
   ): Promise<ApiMonitoringStats> {
-    const result = await api.getDashboardApiUsage(apiId, timeFilter, startDate, endDate);
+    const result = await api.getDashboardApiUsage(apiId, timeFilter, startDate, endDate, clientId);
     return normalizeApiMonitoringStats(
       result as Record<string, unknown>,
       apiId,

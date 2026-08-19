@@ -38,13 +38,14 @@ export const clientAnalyticsService = {
     }
   },
 
-  async getAvailableApis(): Promise<{ id: string; name: string; category: string }[]> {
+  async getAvailableApis(clientId: string = 'all'): Promise<{ id: string; name: string; category: string }[]> {
     try {
-      const result = await api.getApiInfo();
-      return (result.data as Array<{ id: string; name: string; category: string }>).map((a) => ({
+      const result = await api.getDashboardApis(clientId);
+      const list = Array.isArray(result) ? result : [];
+      return list.map((a: { id: string; name: string; category?: string }) => ({
         id: a.id,
         name: a.name,
-        category: a.category,
+        category: a.category ?? 'vehicle',
       }));
     } catch {
       return [];

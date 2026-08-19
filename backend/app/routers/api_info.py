@@ -17,6 +17,7 @@ from app.dependencies.auth import get_current_admin, get_current_user_optional
 from app.schemas.client import ApiInfoRead, ApiInfoDetailRead
 from app.schemas.common import ErrorResponse, BaseResponse
 from app.services.client_service import ClientService
+from app.services.api_collections import is_valid_api_name
 
 router = APIRouter(prefix="/api-info", tags=["API Catalog"])
 
@@ -117,6 +118,16 @@ async def create_api(
     admin=Depends(get_current_admin),
 ):
     """Create a new API in the catalog. Admin only."""
+    api_name = body.name.strip()
+    if not is_valid_api_name(api_name):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=(
+                f"API name '{api_name}' is not registered in API_COLLECTION_MAP. "
+                "Add the PAN collection mapping in api_collections.py first, then create the catalog entry."
+            ),
+        )
+
     existing = await db["apis"].find_one({
         "name": {"$regex": f"^{body.name}$", "$options": "i"}
     })
@@ -182,6 +193,15 @@ async def update_api(
     }
     if not update_data:
         return BaseResponse(success=True, message="No changes to apply.")
+
+    if "name" in update_data and not is_valid_api_name(update_data["name"].strip()):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=(
+                f"API name '{update_data['name']}' is not registered in API_COLLECTION_MAP. "
+                "Update api_collections.py first."
+            ),
+        )
 
     update_data["updated_at"] = datetime.now(timezone.utc)
 

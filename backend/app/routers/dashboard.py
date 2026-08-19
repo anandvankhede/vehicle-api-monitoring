@@ -111,14 +111,17 @@ async def get_dashboard_users(
     responses={401: {"model": ErrorResponse}},
 )
 async def get_dashboard_apis(
+    client_id: str = Query("all", description="Client ID; 'all' for all PAN APIs"),
     db=Depends(get_database),
     _=Depends(get_current_admin),
 ):
     """
-    Return the list of available APIs for the monitoring dropdown.
+    Return APIs for the monitoring dropdown.
+
+    - all: every API in API_COLLECTION_MAP (PAN collections)
+    - client: APIs assigned to that client in user_mapping
     """
-    options = await dashboard_service.get_api_options(db)
-    return options
+    return await dashboard_service.get_api_options(db, client_id=client_id)
 
 
 @router.get(
@@ -165,6 +168,7 @@ async def get_user_api_stats(
 )
 async def get_api_usage(
     api_id: str = Query(..., description="API ID to monitor"),
+    client_id: str = Query("all", description="Client ID; 'all' for global PAN stats"),
     time_filter: str = Query("last_7_days", description="last_30_min | last_1_hour | last_2_hours | last_3_hours | last_4_hours | last_5_hours | today | yesterday | last_7_days | last_month | custom"),
     start_date: Optional[str] = Query(None),
     end_date: Optional[str] = Query(None),
@@ -181,7 +185,7 @@ async def get_api_usage(
     """
     try:
         return await analytics.get_api_usage_stats(
-            response_db, db, api_id, time_filter, start_date, end_date)
+            response_db, db, api_id, time_filter, start_date, end_date, client_id)
     except ValueError as e:
         raise HTTPException(status_code=404, detail=str(e))
     except HTTPException:

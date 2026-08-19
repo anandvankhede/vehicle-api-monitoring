@@ -433,7 +433,11 @@ export const api = {
   getDashboardStats: () => httpGet('/dashboard/stats'),
   getDashboardAnalytics: () => httpGet('/dashboard/analytics'),
   getDashboardUsers: () => httpGet('/dashboard/users'),
-  getDashboardApis: () => httpGet('/dashboard/apis'),
+  getDashboardApis: (clientId: string = 'all') => {
+    const searchParams = new URLSearchParams();
+    searchParams.set('client_id', clientId);
+    return httpGet(`/dashboard/apis?${searchParams.toString()}`);
+  },
   getUserApiStats: (clientId: string = 'all', timeFilter: string = 'last_7_days', startDate?: string, endDate?: string) => {
     const searchParams = new URLSearchParams();
     searchParams.set('client_id', clientId);
@@ -442,9 +446,10 @@ export const api = {
     if (endDate) searchParams.set('end_date', endDate);
     return httpGet(`/dashboard/user-api-stats?${searchParams.toString()}`);
   },
-  getDashboardApiUsage: (apiId: string, timeFilter: string = 'last_7_days', startDate?: string, endDate?: string) => {
+  getDashboardApiUsage: (apiId: string, timeFilter: string = 'last_7_days', startDate?: string, endDate?: string, clientId: string = 'all') => {
     const searchParams = new URLSearchParams();
     searchParams.set('api_id', apiId);
+    searchParams.set('client_id', clientId);
     searchParams.set('time_filter', timeFilter);
     if (startDate) searchParams.set('start_date', startDate);
     if (endDate) searchParams.set('end_date', endDate);

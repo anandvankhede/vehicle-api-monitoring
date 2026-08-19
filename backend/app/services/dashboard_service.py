@@ -21,6 +21,8 @@ from bson import ObjectId
 from datetime import datetime, timezone, timedelta
 from typing import List, Optional, Dict, Any
 
+from app.services.api_collections import API_COLLECTION_MAP
+
 
 def _oid(id_str: str) -> ObjectId:
     """Convert a string to ObjectId."""
@@ -71,7 +73,7 @@ class DashboardService:
         computed from usage_reports.
         """
         total_clients = await db["clients"].count_documents({})
-        total_apis = await db["apis"].count_documents({"is_active": True})
+        total_apis = len(API_COLLECTION_MAP)
 
         # Aggregate usage by API name to compute success rates (last 30 days)
         now = datetime.now(timezone.utc)
@@ -150,17 +152,10 @@ class DashboardService:
     # API options (for monitoring dropdown)
     # ------------------------------------------------------------------
 
-    async def get_api_options(self, db):
-        """Return all active APIs from the catalog as dropdown options."""
-        cursor = db["apis"].find({"is_active": True})
-        docs = await cursor.to_list(length=None)
-        if not docs:
-            from app.utils.api_catalog import ensure_api_catalog
-            await ensure_api_catalog(db)
-            cursor = db["apis"].find({"is_active": True})
-            docs = await cursor.to_list(length=None)
-        return [{"id": str(d["_id"]), "name": d["name"], "category": d.get("category", "vehicle")}
-                for d in docs]
+    async def get_api_options(self, db, client_id: str = "all"):
+        """Return APIs for the monitoring dropdown (PAN scope + client mapping)."""
+        from app.services import analytics_service as analytics
+        return await analytics.resolve_api_options_for_scope(db, client_id)
 
     # ------------------------------------------------------------------
     # User API stats (KPI grid for selected client)

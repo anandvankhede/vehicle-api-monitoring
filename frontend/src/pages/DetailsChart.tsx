@@ -34,11 +34,15 @@ export const DetailsChart: React.FC = () => {
   const [isRefreshing, setIsRefreshing] = useState(false);
   const [isDetailModalOpen, setIsDetailModalOpen] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [responseDbAvailable, setResponseDbAvailable] = useState<boolean | undefined>(undefined);
   const requestRef = useRef(0);
   const hasDataRef = useRef(false);
 
   useEffect(() => {
     dashboardService.getUsers().then(setUsers).catch(() => {});
+    dashboardService.getDashboardSummary()
+      .then((summary) => setResponseDbAvailable(summary.responseDbAvailable))
+      .catch(() => {});
   }, []);
 
   const loadData = useCallback(async (silent = false) => {
@@ -181,9 +185,15 @@ export const DetailsChart: React.FC = () => {
       ) : (
         <div className="rounded-xl p-8 text-center space-y-2 theme-card">
           <AlertCircle className="w-8 h-8 mx-auto" style={{ color: 'var(--text-muted)' }} />
-          <h3 className="text-sm font-bold" style={{ color: 'var(--text-primary)' }}>No Data Available</h3>
+          <h3 className="text-sm font-bold" style={{ color: 'var(--text-primary)' }}>
+            {responseDbAvailable === false
+              ? 'Response Database Not Connected'
+              : 'No Data Available'}
+          </h3>
           <p className="text-xs" style={{ color: 'var(--text-muted)' }}>
-            No trend data for {selectedUserLabel} in this time range.
+            {responseDbAvailable === false
+              ? 'Detailed charts read from the PAN response database. Configure RESPONSE_MONGO_URL on the server and restart the backend.'
+              : `No trend data for ${selectedUserLabel} in this time range.`}
           </p>
         </div>
       )}

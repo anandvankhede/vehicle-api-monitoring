@@ -119,6 +119,118 @@ def _classify_code(code) -> str:
 # user_mapping lookups
 # -----------------------------------------------------------------------------
 
+async def resolve_api_names_for_scope(db, client_id: str = "all") -> List[str]:
+    """
+    APIs available for dashboard charts for the selected scope.
+
+    - all users  -> every API registered in API_COLLECTION_MAP (PAN collections)
+    - one client -> APIs assigned on that client's user_mapping
+    """
+    scope = await resolve_query_scope(db, client_id)
+    return scope["api_names"]
+
+
+async def resolve_query_scope(db, client_id: str = "all") -> Dict[str, Any]:
+    """
+    Resolve PAN query scope for dashboard analytics.
+
+    Returns:
+        api_names:   API names to query
+        key_scope:   access_key filter (None = global PAN query)
+        client_name: display label
+        client_id:   normalized client id string
+    """
+    is_all = client_id in ("all", None, "")
+    if is_all:
+        return {
+            "api_names": sorted(API_COLLECTION_MAP.keys()),
+            "key_scope": None,
+            "client_name": "All Clients",
+            "client_id": "all",
+        }
+
+    mapping = await get_user_mapping_by_client_id(db, client_id)
+    if not mapping:
+        return {
+            "api_names": [],
+            "key_scope": None,
+            "client_name": "Unknown",
+            "client_id": client_id,
+        }
+
+    client = await db["clients"].find_one({"_id": mapping.get("client_id")})
+    return {
+        "api_names": sorted(
+            n for n in (mapping.get("apis") or []) if n in API_COLLECTION_MAP
+        ),
+        "key_scope": mapping.get("access_key"),
+        "client_name": (client or {}).get(
+            "company_name", mapping.get("company_name", "Unknown")
+        ),
+        "client_id": client_id,
+    }
+
+
+async def _catalog_meta_for_api(db, api_name: str) -> Dict[str, Any]:
+    """Optional display metadata from the manual apis catalog."""
+    doc = await db["apis"].find_one({"name": api_name})
+    if not doc:
+        return {"id": api_name, "category": "vehicle"}
+    return {
+        "id": str(doc["_id"]),
+        "category": doc.get("category", "vehicle"),
+    }
+
+
+async def resolve_api_options_for_scope(db, client_id: str = "all") -> List[dict]:
+    """
+    Dropdown options for dashboard / detailed charts.
+
+    PAN scope drives which APIs appear. Manual catalog entries only enrich
+    id/category when they exist — nothing is auto-created.
+    """
+    names = await resolve_api_names_for_scope(db, client_id)
+    if not names:
+        return []
+
+    api_docs = await db["apis"].find({"name": {"$in": names}}).to_list(length=None)
+    name_to_api = {d.get("name"): d for d in api_docs if d.get("name")}
+
+    options = []
+    for name in names:
+        doc = name_to_api.get(name)
+        options.append({
+            "id": str(doc["_id"]) if doc else name,
+            "name": name,
+            "category": (doc or {}).get("category", "vehicle"),
+        })
+    return options
+
+
+async def _resolve_api_name(
+    db,
+    api_id: Optional[str] = None,
+    api_name: Optional[str] = None,
+) -> Optional[str]:
+    """Resolve catalog id or api_name to a PAN api_name."""
+    if api_name and api_name in API_COLLECTION_MAP:
+        return api_name
+    if api_id and api_id in API_COLLECTION_MAP:
+        return api_id
+    if not api_id or api_id == "all":
+        return None
+    try:
+        doc = await db["apis"].find_one({"_id": ObjectId(api_id)})
+        if doc and doc.get("name") in API_COLLECTION_MAP:
+            return doc["name"]
+    except Exception:
+        pass
+    doc = await db["apis"].find_one({"name": api_id})
+    if doc and doc.get("name") in API_COLLECTION_MAP:
+        return doc["name"]
+    return None
+
+
 async def get_user_mapping_by_client_id(db, client_id: str):
     """Return the user_mapping document for a raw client_id string."""
     try:
@@ -425,21 +537,12 @@ async def get_user_api_stats(
         time_filter, start_date, end_date)
     prev_start, prev_end = _previous_range(start_str, end_str)
 
-    from app.services.api_collections import (
-        API_COLLECTION_MAP, get_response_collection_for_api)
+    scope = await resolve_query_scope(db, client_id)
+    names = scope["api_names"]
+    key_scope = scope["key_scope"]
 
-    # --- Scope: which APIs to query and whether to filter by access key ---
-    is_all = client_id in ("all", None, "")
-    if is_all:
-        # ALL USERS: query every known response collection directly.
-        # No access key / mapping is involved — just count response_codes.
-        names = list(API_COLLECTION_MAP.keys())
-        key_scope = None
-    else:
-        # SPECIFIC USER: resolve access_key + assigned apis from user_mapping.
-        mapping = await get_user_mapping_by_client_id(db, client_id)
-        names = (mapping.get("apis") or []) if mapping else []
-        key_scope = mapping.get("access_key") if mapping else None
+    if not names:
+        return []
 
     # --- Aggregate per API (current + previous in one query) ---
     async def _query(name: str) -> Dict[str, Any]:
@@ -525,7 +628,7 @@ async def get_user_api_stats(
             "trendDirection": direction,
             "avgResponseTimeMs": int(round(avg_rt)) if avg_rt else 0,
         })
-    return [r for r in results if r["totalHits"] > 0]
+    return results
 
 # -----------------------------------------------------------------------------
 # Global API monitoring (Main API Monitoring pie + line charts)
@@ -723,6 +826,7 @@ def _trend_bucket_label(bucket: str, time_filter: str) -> str:
 async def get_api_usage_stats(
     response_db, db, api_id: str, time_filter: str = "last_7_days",
     start_date: Optional[str] = None, end_date: Optional[str] = None,
+    client_id: str = "all",
 ) -> Dict[str, Any]:
     """
     Global monitoring stats for a single API, aggregated from the response
@@ -750,18 +854,20 @@ async def get_api_usage_stats(
     if not db_manager.response_db_ready:
         return empty
 
-    # Resolve the API catalog doc (mock ids fall back to matching by name).
-    api_doc = None
-    try:
-        api_doc = await db["apis"].find_one({"_id": ObjectId(api_id)})
-    except Exception:
-        api_doc = None
-    if not api_doc:
-        api_doc = await db["apis"].find_one({"name": api_id})
-    if not api_doc:
+    api_name = await _resolve_api_name(db, api_id)
+    if not api_name:
         raise ValueError("API not found")
 
-    api_name = api_doc.get("name", "")
+    key_scope = None
+    if client_id not in ("all", None, ""):
+        mapping = await get_user_mapping_by_client_id(db, client_id)
+        if not mapping:
+            raise ValueError("Client not found")
+        assigned = mapping.get("apis") or []
+        if api_name not in assigned:
+            raise ValueError("API not assigned to this client")
+        key_scope = mapping.get("access_key")
+
     coll = get_response_collection_for_api(api_name)
     if not coll:
         return {
@@ -780,8 +886,14 @@ async def get_api_usage_stats(
         time_filter, start_date, end_date)
     sub_len = _mongodb_substr_len(time_filter)
 
+    match_stage: Dict[str, Any] = {
+        "created_time": {"$gte": start_str, "$lt": end_str},
+    }
+    if key_scope:
+        match_stage["access_key"] = key_scope
+
     pipeline = [
-        {"$match": {"created_time": {"$gte": start_str, "$lt": end_str}}},
+        {"$match": match_stage},
         {"$facet": {
             "buckets": [
                 {"$group": {
@@ -849,8 +961,9 @@ async def get_api_usage_stats(
     avg_rt = (avg_grp[0].get("avg")
               if avg_grp and avg_grp[0].get("avg") is not None else 0)
 
+    meta = await _catalog_meta_for_api(db, api_name)
     return {
-        "apiId": str(api_doc.get("_id") or ""),
+        "apiId": meta["id"] if meta["id"] != api_name else api_id,
         "apiName": api_name,
         "timeFilter": time_filter,
         "distribution": distribution,
@@ -897,21 +1010,13 @@ async def get_client_details_stats(
     api_docs = await db["apis"].find().to_list(length=None)
     name_to_api = {d.get("name"): d for d in api_docs if d.get("name")}
 
-    is_all = client_id in ("all", None, "")
-    if is_all:
-        names = [n for n in API_COLLECTION_MAP.keys()]
-        key_scope = None
-        client_name = "All Clients"
-    else:
-        mapping = await get_user_mapping_by_client_id(db, client_id)
-        if not mapping:
-            raise ValueError("Client not found")
-        client = await db["clients"].find_one({"_id": mapping.get("client_id")})
-        client_name = (client or {}).get("company_name", "Unknown")
-        names = [(n or "") for n in (mapping.get("apis") or [])]
-        key_scope = mapping.get("access_key")
+    scope = await resolve_query_scope(db, client_id)
+    names = scope["api_names"]
+    key_scope = scope["key_scope"]
+    client_name = scope["client_name"]
 
-    names = [n for n in names if n in API_COLLECTION_MAP]
+    if client_id not in ("all", None, "") and not names:
+        raise ValueError("Client not found")
 
     async def _query(name: str) -> Dict[str, Any]:
         coll = get_response_collection_for_api(name)
@@ -1038,21 +1143,14 @@ async def get_client_analytics_stats(
     # Resolve the optional API filter to an application api_name.
     api_name_filter = None
     if api_id and api_id != "all":
-        api_doc = None
-        try:
-            api_doc = await db["apis"].find_one({"_id": ObjectId(api_id)})
-        except Exception:
-            api_doc = None
-        if not api_doc:
-            api_doc = await db["apis"].find_one({"name": api_id})
-        if api_doc:
-            api_name_filter = api_doc.get("name")
+        api_name_filter = await _resolve_api_name(db, api_id)
 
     api_docs = await db["apis"].find().to_list(length=None)
     name_to_api = {d.get("name"): d for d in api_docs if d.get("name")}
 
     # Scope: which clients (and which api names per client) to query.
     if client_id in ("all", None, ""):
+        # All clients: aggregate each active user_mapping row (per-client view).
         mappings = await db["user_mapping"].find(
             {"status": "Active"}).to_list(length=None)
     else:
@@ -1061,6 +1159,8 @@ async def get_client_analytics_stats(
 
     async def _counts_for_client(mapping: dict, names: List[str]) -> List[dict]:
         access_key = mapping.get("access_key")
+        if not access_key:
+            return []
         cid = mapping.get("client_id")
         client = None
         if cid is not None:
@@ -1080,9 +1180,8 @@ async def get_client_analytics_stats(
                 return {"name": name, "counts": {}, "avg": None}
             match: Dict[str, Any] = {
                 "created_time": {"$gte": start_str, "$lt": end_str},
+                "access_key": access_key,
             }
-            if access_key:
-                match["access_key"] = access_key
             pipeline = [
                 {"$match": match},
                 {"$facet": {
@@ -1144,9 +1243,10 @@ async def get_client_analytics_stats(
         if not isinstance(mapping, dict):
             continue
         assigned = mapping.get("apis") or []
+        if not mapping.get("access_key"):
+            continue
         if api_name_filter:
-            names = ([api_name_filter]
-                     if (api_name_filter in assigned or not assigned) else [])
+            names = [api_name_filter] if api_name_filter in assigned else []
         else:
             names = list(assigned)
         names = [n for n in names if n in API_COLLECTION_MAP]
@@ -1162,14 +1262,14 @@ async def get_client_analytics_stats(
                    or q in r["api_name"].lower()
                    or q in r["client_code"].lower()]
 
-    # Status filter: success = >=95% rate, failed = <95%, notFound = <80%.
+    # Status filter on actual response buckets.
     if status_filter != "all":
         if status_filter == "success":
-            records = [r for r in records if r["success_rate"] >= 95]
+            records = [r for r in records if r["success"] > 0 and r["failed"] == 0 and r["not_found"] == 0]
         elif status_filter == "failed":
-            records = [r for r in records if r["success_rate"] < 95]
+            records = [r for r in records if r["failed"] > 0]
         elif status_filter == "notFound":
-            records = [r for r in records if r["success_rate"] < 80]
+            records = [r for r in records if r["not_found"] > 0]
 
     # Sorting (translate camelCase sort key from the frontend).
     sort_key = _CLIENT_ANALYTICS_SORT_MAP.get(sort_by, "total_hits")
@@ -1254,22 +1354,6 @@ def _extract_response_code(response: Any) -> str:
         return ""
     code = response.get("response_code")
     return "" if code is None else str(code)
-
-
-async def _resolve_api_name(db, api_id: Optional[str], api_name: Optional[str]) -> Optional[str]:
-    if api_name and api_name in API_COLLECTION_MAP:
-        return api_name
-    if not api_id or api_id == "all":
-        return None
-    api_doc = None
-    try:
-        api_doc = await db["apis"].find_one({"_id": ObjectId(api_id)})
-    except Exception:
-        api_doc = None
-    if not api_doc:
-        api_doc = await db["apis"].find_one({"name": api_id})
-    name = (api_doc or {}).get("name")
-    return name if name in API_COLLECTION_MAP else None
 
 
 async def export_client_analytics_detail(
@@ -1416,14 +1500,6 @@ async def get_dashboard_users(db) -> List[dict]:
     return result
 
 
-async def get_dashboard_apis(db) -> List[dict]:
-    """Return the active API catalog options (application api_names)."""
-    cursor = db["apis"].find({"is_active": True})
-    docs = await cursor.to_list(length=None)
-    out = []
-    for d in docs:
-        name = d.get("name")
-        if name and name in API_COLLECTION_MAP:
-            out.append({"api_name": name, "name": name,
-                        "collection": API_COLLECTION_MAP[name]})
-    return out
+async def get_dashboard_apis(db, client_id: str = "all") -> List[dict]:
+    """Return API dropdown options for the selected dashboard scope."""
+    return await resolve_api_options_for_scope(db, client_id)

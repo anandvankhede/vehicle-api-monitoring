@@ -13,7 +13,6 @@ import asyncio
 from datetime import datetime, timezone
 
 from app.database import db_manager
-from app.utils.api_catalog import ensure_api_catalog
 from app.utils.security import hash_password
 
 
@@ -40,21 +39,14 @@ async def seed():
             "created_at": datetime.now(timezone.utc),
             "updated_at": datetime.now(timezone.utc),
         })
-        print("  [OK] Admin user created (username: admin, password: admin123)")
-
-    # ========================================================================
-    # 2. API CATALOG (from API_COLLECTION_MAP)
-    # ========================================================================
-    seeded = await ensure_api_catalog(db)
-    if seeded:
-        print(f"  [OK] API catalog seeded ({seeded} APIs)")
+        print("  [OK] Admin user created (username: admin, password: kyzify@2026)")
 
     # ========================================================================
     # DONE
     # ========================================================================
     print("\n[OK] Database seeding complete!")
     print("\nDemo credentials:")
-    print("  Admin:  admin / admin123")
+    print("  Admin:  admin / kyzify@2026")
 
     db_manager.close()
 

@@ -68,16 +68,20 @@ export const Dashboard: React.FC = () => {
     setApiEndDate(end);
   }, [resetMonitoringForFilterChange]);
 
-  const loadAvailableApis = useCallback(async () => {
+  const loadAvailableApis = useCallback(async (clientId: string = selectedUserId) => {
     try {
       setApisLoadError(null);
-      const apisRes = await dashboardService.getAvailableApis();
+      const apisRes = await dashboardService.getAvailableApis(clientId);
       setAvailableApis(apisRes);
       if (apisRes.length > 0) {
-        setSelectedApiId((current) => current || apisRes[0].id);
+        setSelectedApiId(apisRes[0].id);
       } else {
         setSelectedApiId('');
-        setApisLoadError('No APIs found in the catalog. Restart the backend after deploy to auto-create them.');
+        setApisLoadError(
+          clientId === 'all'
+            ? 'No PAN APIs are registered. Add API names to API_COLLECTION_MAP on the server.'
+            : 'No APIs are assigned to this client. Configure API access in Client Management.'
+        );
       }
       return apisRes;
     } catch (err) {
@@ -85,7 +89,7 @@ export const Dashboard: React.FC = () => {
       setApisLoadError('Could not load API list. Check backend connection and login session.');
       return [];
     }
-  }, []);
+  }, [selectedUserId]);
 
   // 1. Initial Load: Header summary, Users list, and Available APIs list
   useEffect(() => {
@@ -102,8 +106,6 @@ export const Dashboard: React.FC = () => {
           setSummary(summaryRes);
           setUsers(usersRes);
         }
-
-        await loadAvailableApis();
       } catch (err) {
         if (isMounted) setError('Failed to load initial system metadata.');
       } finally {
@@ -115,7 +117,12 @@ export const Dashboard: React.FC = () => {
     return () => {
       isMounted = false;
     };
-  }, [loadAvailableApis]);
+  }, []);
+
+  // Reload monitoring API dropdown when the user filter changes
+  useEffect(() => {
+    loadAvailableApis(selectedUserId);
+  }, [selectedUserId, loadAvailableApis]);
 
   // 2. Fetch User API Stats whenever User Filter or Time Filter changes (Section 3)
   const loadUserApiStats = useCallback(async (silent = false) => {
@@ -157,7 +164,8 @@ export const Dashboard: React.FC = () => {
         selectedApiId,
         apiTimeFilter,
         apiStartDate,
-        apiEndDate
+        apiEndDate,
+        selectedUserId,
       );
       if (requestId !== monitoringRequestRef.current) {
         return;
@@ -173,7 +181,7 @@ export const Dashboard: React.FC = () => {
         setIsMonitoringLoading(false);
       }
     }
-  }, [selectedApiId, apiTimeFilter, apiStartDate, apiEndDate]);
+  }, [selectedApiId, apiTimeFilter, apiStartDate, apiEndDate, selectedUserId]);
 
   useEffect(() => {
     loadUserApiStats(false);
@@ -195,7 +203,7 @@ export const Dashboard: React.FC = () => {
   // Reset Filters Handler
   const handleResetUserFilters = () => {
     setSelectedUserId('all');
-    setUserTimeFilter('today');
+    setUserTimeFilter('last_7_days');
     setUserStartDate('');
     setUserEndDate('');
   };
@@ -324,7 +332,7 @@ export const Dashboard: React.FC = () => {
           onRefresh={() => loadMonitoringStats(false)}
           responseDbAvailable={summary?.responseDbAvailable}
           apisLoadError={apisLoadError}
-          onReloadApis={loadAvailableApis}
+          onReloadApis={() => loadAvailableApis(selectedUserId)}
         />
       </div>
     </div>

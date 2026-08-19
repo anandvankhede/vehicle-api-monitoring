@@ -18,7 +18,6 @@ from fastapi.responses import JSONResponse
 
 from app.config import settings
 from app.database import db_manager, ensure_app_indexes, verify_response_database
-from app.utils.api_catalog import ensure_api_catalog
 from app.routers import (
     auth,
     client,
@@ -104,16 +103,24 @@ async def root():
 @app.get("/health")
 async def health_check():
     """
-    Health check endpoint — verifies DB connectivity.
+    Health check endpoint — verifies DB connectivity and response DB status.
     """
     try:
         db = db_manager.get_db()
         await db.command("ping")
-        return {"status": "healthy", "database": "connected"}
+        return {
+            "status": "healthy",
+            "database": "connected",
+            "responseDbAvailable": db_manager.response_db_ready,
+        }
     except Exception:
         return JSONResponse(
             status_code=503,
-            content={"status": "unhealthy", "database": "disconnected"},
+            content={
+                "status": "unhealthy",
+                "database": "disconnected",
+                "responseDbAvailable": False,
+            },
         )
 
 
@@ -149,9 +156,6 @@ async def startup():
     try:
         db = db_manager.get_db()
         await ensure_app_indexes(db)
-        seeded = await ensure_api_catalog(db)
-        if seeded:
-            print(f"[OK] API catalog bootstrapped ({seeded} new entries)")
     except Exception as exc:  # pragma: no cover - non-fatal
         print(f"[WARN] App startup setup warning: {exc}")
 

@@ -74,8 +74,12 @@ export const ClientAnalytics: React.FC = () => {
 
   useEffect(() => {
     dashboardService.getUsers().then(setUsers).catch(() => {});
-    clientAnalyticsService.getAvailableApis().then(setApis).catch(() => {});
   }, []);
+
+  useEffect(() => {
+    clientAnalyticsService.getAvailableApis(selectedClientId).then(setApis).catch(() => {});
+    setSelectedApiId('all');
+  }, [selectedClientId]);
 
   const loadData = useCallback(async () => {
     try {
