@@ -73,7 +73,10 @@ class DashboardService:
         total_clients = await db["clients"].count_documents({})
         total_apis = await db["apis"].count_documents({"is_active": True})
 
-        # Aggregate usage by API name to compute success rates
+        # Aggregate usage by API name to compute success rates (last 30 days)
+        now = datetime.now(timezone.utc)
+        cutoff = now - timedelta(days=30)
+
         usage_cursor = db["usage_reports"].aggregate([
             {"$match": {"created_at": {"$gte": cutoff}}},
             {"$group": {
