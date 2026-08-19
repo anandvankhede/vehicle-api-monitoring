@@ -111,16 +111,29 @@ export const dashboardService = {
   },
 
   /**
-   * Fetch list of available APIs for Main API Monitoring section
+   * Fetch list of available APIs for Main API Monitoring section.
+   * Prefer the dashboard endpoint (active APIs only); fall back to the catalog.
    */
   async getAvailableApis(): Promise<ApiOption[]> {
+    const toOption = (a: { id: string; name: string; category?: string }): ApiOption => ({
+      id: a.id,
+      name: a.name,
+      category: a.category ?? 'vehicle',
+    });
+
+    try {
+      const dashboardApis = await api.getDashboardApis();
+      const options = (dashboardApis as Array<{ id: string; name: string; category?: string }>).map(toOption);
+      if (options.length > 0) {
+        return options;
+      }
+    } catch {
+      // fall through to catalog endpoint
+    }
+
     try {
       const result = await api.getApiInfo();
-      return (result.data as Array<{ id: string; name: string; category: string }>).map((a) => ({
-        id: a.id,
-        name: a.name,
-        category: a.category,
-      }));
+      return (result.data as Array<{ id: string; name: string; category?: string }>).map(toOption);
     } catch {
       return [];
     }

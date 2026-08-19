@@ -25,6 +25,7 @@ interface ApiMonitoringSectionProps {
   isRefreshing?: boolean;
   onRefresh?: () => void;
   onTrendModalOpenChange?: (open: boolean) => void;
+  responseDbAvailable?: boolean;
 }
 
 const MAIN_API_TIME_OPTIONS: TimeOption[] = [
@@ -55,6 +56,7 @@ export const ApiMonitoringSection: React.FC<ApiMonitoringSectionProps> = ({
   isRefreshing = false,
   onRefresh,
   onTrendModalOpenChange,
+  responseDbAvailable,
 }) => {
   const statsMatchSelection =
     monitoringStats != null &&
@@ -109,11 +111,17 @@ export const ApiMonitoringSection: React.FC<ApiMonitoringSectionProps> = ({
                 e.currentTarget.style.boxShadow = 'none';
               }}
             >
-              {apis.map((api) => (
-                <option key={api.id} value={api.id} style={{ backgroundColor: 'var(--card)', color: 'var(--text-primary)' }}>
-                  {api.name}
+              {apis.length === 0 ? (
+                <option value="" style={{ backgroundColor: 'var(--card)', color: 'var(--text-primary)' }}>
+                  No APIs available
                 </option>
-              ))}
+              ) : (
+                apis.map((api) => (
+                  <option key={api.id} value={api.id} style={{ backgroundColor: 'var(--card)', color: 'var(--text-primary)' }}>
+                    {api.name}
+                  </option>
+                ))
+              )}
             </select>
             <div className="absolute inset-y-0 right-0 flex items-center px-2 pointer-events-none" style={{ color: 'var(--text-muted)' }}>
               <Server className="w-3.5 h-3.5" style={{ color: 'var(--primary)' }} />
@@ -223,9 +231,15 @@ export const ApiMonitoringSection: React.FC<ApiMonitoringSectionProps> = ({
         /* No API selected yet — instruct the user */
         <div className="rounded-xl p-6 text-center space-y-2 theme-card">
           <Server className="w-7 h-7 mx-auto" style={{ color: 'var(--text-muted)' }} />
-          <h3 className="text-xs font-bold" style={{ color: 'var(--text-primary)' }}>No API Selected</h3>
+          <h3 className="text-xs font-bold" style={{ color: 'var(--text-primary)' }}>
+            {apis.length === 0 ? 'No APIs Configured' : 'No API Selected'}
+          </h3>
           <p className="text-[11px]" style={{ color: 'var(--text-secondary)' }}>
-            Choose an API from the dropdown above to view its request telemetry and health.
+            {apis.length === 0
+              ? responseDbAvailable === false
+                ? 'The API catalog is empty and the response database is not connected. Set RESPONSE_MONGO_URL on the server and restart the backend to bootstrap APIs.'
+                : 'The API catalog is empty. Restart the backend after deploy, or add APIs under API Management.'
+              : 'Choose an API from the dropdown above to view its request telemetry and health.'}
           </p>
         </div>
       )}

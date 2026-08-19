@@ -305,6 +305,7 @@ export const Dashboard: React.FC = () => {
           isRefreshing={isMonitoringLoading && monitoringStats?.timeFilter === apiTimeFilter && monitoringStats?.apiId === selectedApiId}
           onTrendModalOpenChange={setIsTrendModalOpen}
           onRefresh={() => loadMonitoringStats(false)}
+          responseDbAvailable={summary?.responseDbAvailable}
         />
       </div>
     </div>

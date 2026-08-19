@@ -13,6 +13,7 @@ import asyncio
 from datetime import datetime, timezone
 
 from app.database import db_manager
+from app.utils.api_catalog import ensure_api_catalog
 from app.utils.security import hash_password
 
 
@@ -31,7 +32,7 @@ async def seed():
         await db["users"].insert_one({
             "_id": admin_id,
             "username": "admin",
-            "password_hash": hash_password("admin123"),
+            "password_hash": hash_password("kyzify@2026"),
             "name": "Admin User",
             "email": "admin@vehicleapi.com",
             "role": "admin",
@@ -40,6 +41,13 @@ async def seed():
             "updated_at": datetime.now(timezone.utc),
         })
         print("  [OK] Admin user created (username: admin, password: admin123)")
+
+    # ========================================================================
+    # 2. API CATALOG (from API_COLLECTION_MAP)
+    # ========================================================================
+    seeded = await ensure_api_catalog(db)
+    if seeded:
+        print(f"  [OK] API catalog seeded ({seeded} APIs)")
 
     # ========================================================================
     # DONE

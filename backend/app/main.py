@@ -16,6 +16,7 @@ from fastapi.responses import JSONResponse
 
 from app.config import settings
 from app.database import db_manager, ensure_app_indexes, verify_response_database
+from app.utils.api_catalog import ensure_api_catalog
 from app.routers import (
     auth,
     client,
@@ -128,9 +129,13 @@ async def startup():
     db_manager.connect()
     await verify_response_database()
     try:
-        await ensure_app_indexes(db_manager.get_db())
+        db = db_manager.get_db()
+        await ensure_app_indexes(db)
+        seeded = await ensure_api_catalog(db)
+        if seeded:
+            print(f"[OK] API catalog bootstrapped ({seeded} new entries)")
     except Exception as exc:  # pragma: no cover - non-fatal
-        print(f"[WARN] App index setup warning: {exc}")
+        print(f"[WARN] App startup setup warning: {exc}")
 
 
 @app.on_event("shutdown")
