@@ -154,6 +154,11 @@ class DashboardService:
         """Return all active APIs from the catalog as dropdown options."""
         cursor = db["apis"].find({"is_active": True})
         docs = await cursor.to_list(length=None)
+        if not docs:
+            from app.utils.api_catalog import ensure_api_catalog
+            await ensure_api_catalog(db)
+            cursor = db["apis"].find({"is_active": True})
+            docs = await cursor.to_list(length=None)
         return [{"id": str(d["_id"]), "name": d["name"], "category": d.get("category", "vehicle")}
                 for d in docs]
 

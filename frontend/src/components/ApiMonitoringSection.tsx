@@ -26,6 +26,8 @@ interface ApiMonitoringSectionProps {
   onRefresh?: () => void;
   onTrendModalOpenChange?: (open: boolean) => void;
   responseDbAvailable?: boolean;
+  apisLoadError?: string | null;
+  onReloadApis?: () => void;
 }
 
 const MAIN_API_TIME_OPTIONS: TimeOption[] = [
@@ -57,6 +59,8 @@ export const ApiMonitoringSection: React.FC<ApiMonitoringSectionProps> = ({
   onRefresh,
   onTrendModalOpenChange,
   responseDbAvailable,
+  apisLoadError,
+  onReloadApis,
 }) => {
   const statsMatchSelection =
     monitoringStats != null &&
@@ -236,11 +240,22 @@ export const ApiMonitoringSection: React.FC<ApiMonitoringSectionProps> = ({
           </h3>
           <p className="text-[11px]" style={{ color: 'var(--text-secondary)' }}>
             {apis.length === 0
-              ? responseDbAvailable === false
-                ? 'The API catalog is empty and the response database is not connected. Set RESPONSE_MONGO_URL on the server and restart the backend to bootstrap APIs.'
-                : 'The API catalog is empty. Restart the backend after deploy, or add APIs under API Management.'
+              ? apisLoadError
+                ?? (responseDbAvailable === false
+                  ? 'The API catalog is empty and the response database is not connected. Set RESPONSE_MONGO_URL on the server and restart the backend to bootstrap APIs.'
+                  : 'The API catalog is empty. Restart the backend after deploy, or add APIs under API Management.')
               : 'Choose an API from the dropdown above to view its request telemetry and health.'}
           </p>
+          {apis.length === 0 && onReloadApis && (
+            <button
+              type="button"
+              onClick={onReloadApis}
+              className="px-3 py-1.5 rounded-md text-[11px] font-semibold"
+              style={{ backgroundColor: 'var(--primary-light)', color: 'var(--primary)' }}
+            >
+              Reload API List
+            </button>
+          )}
         </div>
       )}
     </section>

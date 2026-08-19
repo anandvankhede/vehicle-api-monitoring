@@ -7,10 +7,12 @@ registers all routers, configures CORS, and sets up the database
 connection lifecycle (connect on startup, close on shutdown).
 
 Run with:
-    uvicorn app.main:app --reload
+    uvicorn app.main:app --reload --host 0.0.0.0 --port 5000
 """
 
-from fastapi import FastAPI
+import traceback
+
+from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 
@@ -65,7 +67,22 @@ app.add_middleware(
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
+    expose_headers=["*"],
 )
+
+
+@app.exception_handler(Exception)
+async def unhandled_exception_handler(request: Request, exc: Exception):
+    """
+    Return JSON for unexpected errors so CORS middleware can attach headers.
+    Without this, some 500s surface in the browser as generic CORS failures.
+    """
+    print(f"[ERROR] Unhandled exception on {request.method} {request.url.path}: {exc}")
+    traceback.print_exc()
+    return JSONResponse(
+        status_code=500,
+        content={"detail": "Internal server error"},
+    )
 
 # ============================================================================
 # Root Endpoint
@@ -126,6 +143,7 @@ app.include_router(audit_log.router, prefix="/api")
 @app.on_event("startup")
 async def startup():
     """Connect to MongoDB, check response DB (non-fatal), ensure app indexes."""
+    print(f"[OK] CORS allowed origins: {', '.join(settings.FRONTEND_ORIGINS)}")
     db_manager.connect()
     await verify_response_database()
     try:

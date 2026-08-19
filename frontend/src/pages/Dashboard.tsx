@@ -32,6 +32,7 @@ export const Dashboard: React.FC = () => {
   // Main API Monitoring State (Section 4 & 5)
   const [availableApis, setAvailableApis] = useState<ApiOption[]>([]);
   const [selectedApiId, setSelectedApiId] = useState<string>('');
+  const [apisLoadError, setApisLoadError] = useState<string | null>(null);
   const [apiTimeFilter, setApiTimeFilter] = useState<ApiTimeFilterValue>('last_7_days');
   const [apiStartDate, setApiStartDate] = useState<string>('');
   const [apiEndDate, setApiEndDate] = useState<string>('');
@@ -67,26 +68,42 @@ export const Dashboard: React.FC = () => {
     setApiEndDate(end);
   }, [resetMonitoringForFilterChange]);
 
+  const loadAvailableApis = useCallback(async () => {
+    try {
+      setApisLoadError(null);
+      const apisRes = await dashboardService.getAvailableApis();
+      setAvailableApis(apisRes);
+      if (apisRes.length > 0) {
+        setSelectedApiId((current) => current || apisRes[0].id);
+      } else {
+        setSelectedApiId('');
+        setApisLoadError('No APIs found in the catalog. Restart the backend after deploy to auto-create them.');
+      }
+      return apisRes;
+    } catch (err) {
+      console.error('Failed to load available APIs:', err);
+      setApisLoadError('Could not load API list. Check backend connection and login session.');
+      return [];
+    }
+  }, []);
+
   // 1. Initial Load: Header summary, Users list, and Available APIs list
   useEffect(() => {
     let isMounted = true;
     const fetchInitialData = async () => {
       try {
         setIsSummaryLoading(true);
-        const [summaryRes, usersRes, apisRes] = await Promise.all([
+        const [summaryRes, usersRes] = await Promise.all([
           dashboardService.getDashboardSummary(),
           dashboardService.getUsers(),
-          dashboardService.getAvailableApis(),
         ]);
 
         if (isMounted) {
           setSummary(summaryRes);
           setUsers(usersRes);
-          setAvailableApis(apisRes);
-          if (apisRes.length > 0) {
-            setSelectedApiId(apisRes[0].id);
-          }
         }
+
+        await loadAvailableApis();
       } catch (err) {
         if (isMounted) setError('Failed to load initial system metadata.');
       } finally {
@@ -98,7 +115,7 @@ export const Dashboard: React.FC = () => {
     return () => {
       isMounted = false;
     };
-  }, []);
+  }, [loadAvailableApis]);
 
   // 2. Fetch User API Stats whenever User Filter or Time Filter changes (Section 3)
   const loadUserApiStats = useCallback(async (silent = false) => {
@@ -306,6 +323,8 @@ export const Dashboard: React.FC = () => {
           onTrendModalOpenChange={setIsTrendModalOpen}
           onRefresh={() => loadMonitoringStats(false)}
           responseDbAvailable={summary?.responseDbAvailable}
+          apisLoadError={apisLoadError}
+          onReloadApis={loadAvailableApis}
         />
       </div>
     </div>

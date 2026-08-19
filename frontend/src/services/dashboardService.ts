@@ -121,22 +121,40 @@ export const dashboardService = {
       category: a.category ?? 'vehicle',
     });
 
+    const normalizeList = (raw: unknown): ApiOption[] => {
+      if (Array.isArray(raw)) {
+        return raw
+          .filter((item): item is { id: string; name: string; category?: string } =>
+            Boolean(item && typeof item === 'object' && 'id' in item && 'name' in item))
+          .map(toOption);
+      }
+      if (raw && typeof raw === 'object' && 'data' in raw && Array.isArray((raw as { data: unknown }).data)) {
+        return normalizeList((raw as { data: unknown }).data);
+      }
+      return [];
+    };
+
     try {
       const dashboardApis = await api.getDashboardApis();
-      const options = (dashboardApis as Array<{ id: string; name: string; category?: string }>).map(toOption);
+      const options = normalizeList(dashboardApis);
       if (options.length > 0) {
         return options;
       }
-    } catch {
-      // fall through to catalog endpoint
+    } catch (err) {
+      console.warn('Failed to load dashboard APIs, falling back to catalog:', err);
     }
 
     try {
       const result = await api.getApiInfo();
-      return (result.data as Array<{ id: string; name: string; category?: string }>).map(toOption);
-    } catch {
-      return [];
+      const options = normalizeList(result);
+      if (options.length > 0) {
+        return options;
+      }
+    } catch (err) {
+      console.warn('Failed to load API catalog:', err);
     }
+
+    return [];
   },
 
   /**
