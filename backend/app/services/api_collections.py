@@ -59,3 +59,22 @@ def is_valid_api_name(api_name: str) -> bool:
 def get_all_api_names() -> List[str]:
     """All registered application API names (sorted)."""
     return sorted(API_COLLECTION_MAP.keys())
+
+
+async def get_live_pan_api_names(response_db) -> List[str]:
+    """
+    Return API names whose mapped PAN collection currently exists.
+
+    Reads collection names from the response database on each call so the
+    dashboard reflects additions/removals without redeploying.
+    """
+    if response_db is None:
+        return get_all_api_names()
+    try:
+        existing = set(await response_db.list_collection_names())
+    except Exception:
+        return get_all_api_names()
+    return sorted(
+        name for name, coll in API_COLLECTION_MAP.items()
+        if coll in existing
+    )

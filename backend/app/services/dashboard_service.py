@@ -152,10 +152,12 @@ class DashboardService:
     # API options (for monitoring dropdown)
     # ------------------------------------------------------------------
 
-    async def get_api_options(self, db, client_id: str = "all"):
+    async def get_api_options(self, db, client_id: str = "all", response_db=None):
         """Return APIs for the monitoring dropdown (PAN scope + client mapping)."""
         from app.services import analytics_service as analytics
-        return await analytics.resolve_api_options_for_scope(db, client_id)
+        return await analytics.resolve_api_options_for_scope(
+            db, client_id, response_db=response_db,
+        )
 
     # ------------------------------------------------------------------
     # User API stats (KPI grid for selected client)

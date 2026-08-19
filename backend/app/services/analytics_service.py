@@ -41,6 +41,7 @@ from app.utils.dashboard_time import (
 from app.services.api_collections import (
     API_COLLECTION_MAP,
     get_response_collection_for_api,
+    get_live_pan_api_names,
     is_valid_api_name,
 )
 
@@ -119,18 +120,22 @@ def _classify_code(code) -> str:
 # user_mapping lookups
 # -----------------------------------------------------------------------------
 
-async def resolve_api_names_for_scope(db, client_id: str = "all") -> List[str]:
+async def resolve_api_names_for_scope(
+    db, client_id: str = "all", response_db=None,
+) -> List[str]:
     """
     APIs available for dashboard charts for the selected scope.
 
-    - all users  -> every API registered in API_COLLECTION_MAP (PAN collections)
-    - one client -> APIs assigned on that client's user_mapping
+    - all users  -> PAN APIs whose collections currently exist
+    - one client -> assigned APIs whose PAN collections currently exist
     """
-    scope = await resolve_query_scope(db, client_id)
+    scope = await resolve_query_scope(db, client_id, response_db=response_db)
     return scope["api_names"]
 
 
-async def resolve_query_scope(db, client_id: str = "all") -> Dict[str, Any]:
+async def resolve_query_scope(
+    db, client_id: str = "all", response_db=None,
+) -> Dict[str, Any]:
     """
     Resolve PAN query scope for dashboard analytics.
 
@@ -141,9 +146,10 @@ async def resolve_query_scope(db, client_id: str = "all") -> Dict[str, Any]:
         client_id:   normalized client id string
     """
     is_all = client_id in ("all", None, "")
+    live_names = set(await get_live_pan_api_names(response_db))
     if is_all:
         return {
-            "api_names": sorted(API_COLLECTION_MAP.keys()),
+            "api_names": sorted(live_names),
             "key_scope": None,
             "client_name": "All Clients",
             "client_id": "all",
@@ -161,7 +167,7 @@ async def resolve_query_scope(db, client_id: str = "all") -> Dict[str, Any]:
     client = await db["clients"].find_one({"_id": mapping.get("client_id")})
     return {
         "api_names": sorted(
-            n for n in (mapping.get("apis") or []) if n in API_COLLECTION_MAP
+            n for n in (mapping.get("apis") or []) if n in live_names
         ),
         "key_scope": mapping.get("access_key"),
         "client_name": (client or {}).get(
@@ -182,14 +188,16 @@ async def _catalog_meta_for_api(db, api_name: str) -> Dict[str, Any]:
     }
 
 
-async def resolve_api_options_for_scope(db, client_id: str = "all") -> List[dict]:
+async def resolve_api_options_for_scope(
+    db, client_id: str = "all", response_db=None,
+) -> List[dict]:
     """
     Dropdown options for dashboard / detailed charts.
 
     PAN scope drives which APIs appear. Manual catalog entries only enrich
     id/category when they exist — nothing is auto-created.
     """
-    names = await resolve_api_names_for_scope(db, client_id)
+    names = await resolve_api_names_for_scope(db, client_id, response_db=response_db)
     if not names:
         return []
 
@@ -537,7 +545,7 @@ async def get_user_api_stats(
         time_filter, start_date, end_date)
     prev_start, prev_end = _previous_range(start_str, end_str)
 
-    scope = await resolve_query_scope(db, client_id)
+    scope = await resolve_query_scope(db, client_id, response_db=response_db)
     names = scope["api_names"]
     key_scope = scope["key_scope"]
 
@@ -1010,7 +1018,7 @@ async def get_client_details_stats(
     api_docs = await db["apis"].find().to_list(length=None)
     name_to_api = {d.get("name"): d for d in api_docs if d.get("name")}
 
-    scope = await resolve_query_scope(db, client_id)
+    scope = await resolve_query_scope(db, client_id, response_db=response_db)
     names = scope["api_names"]
     key_scope = scope["key_scope"]
     client_name = scope["client_name"]
@@ -1500,6 +1508,8 @@ async def get_dashboard_users(db) -> List[dict]:
     return result
 
 
-async def get_dashboard_apis(db, client_id: str = "all") -> List[dict]:
+async def get_dashboard_apis(
+    db, client_id: str = "all", response_db=None,
+) -> List[dict]:
     """Return API dropdown options for the selected dashboard scope."""
-    return await resolve_api_options_for_scope(db, client_id)
+    return await resolve_api_options_for_scope(db, client_id, response_db=response_db)

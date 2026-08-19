@@ -113,15 +113,18 @@ async def get_dashboard_users(
 async def get_dashboard_apis(
     client_id: str = Query("all", description="Client ID; 'all' for all PAN APIs"),
     db=Depends(get_database),
+    response_db=Depends(get_response_database),
     _=Depends(get_current_admin),
 ):
     """
     Return APIs for the monitoring dropdown.
 
-    - all: every API in API_COLLECTION_MAP (PAN collections)
-    - client: APIs assigned to that client in user_mapping
+    - all: every API whose PAN collection currently exists
+    - client: assigned APIs whose PAN collections currently exist
     """
-    return await dashboard_service.get_api_options(db, client_id=client_id)
+    return await dashboard_service.get_api_options(
+        db, client_id=client_id, response_db=response_db,
+    )
 
 
 @router.get(
