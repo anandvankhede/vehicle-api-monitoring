@@ -17,7 +17,11 @@ from app.dependencies.auth import get_current_admin, get_current_user_optional
 from app.schemas.client import ApiInfoRead, ApiInfoDetailRead
 from app.schemas.common import ErrorResponse, BaseResponse
 from app.services.client_service import ClientService
-from app.services.api_collections import get_live_pan_api_names, is_valid_api_name
+from app.services.api_collections import (
+    get_live_pan_api_names,
+    is_catalog_api_name,
+    is_registered_api_name,
+)
 
 router = APIRouter(prefix="/api-info", tags=["API Catalog"])
 
@@ -25,9 +29,20 @@ client_service = ClientService()
 
 
 def _merge_live_pan_apis(catalog: List[dict], live_names: List[str]) -> List[dict]:
-    """Include live PAN APIs in the catalog list without persisting them."""
+    """Mark catalog rows when their PAN collection is live; add PAN-only APIs."""
     catalog_names = {item.get("name") for item in catalog if item.get("name")}
-    merged = list(catalog)
+    live_set = set(live_names)
+    merged = []
+    for item in catalog:
+        row = dict(item)
+        name = row.get("name")
+        if name in live_set:
+            row["pan_status"] = "live"
+            row["pan_collection"] = f"result_{name}"
+        else:
+            row["pan_status"] = "pending"
+            row["pan_collection"] = f"result_{name}" if name else None
+        merged.append(row)
     for name in live_names:
         if name in catalog_names:
             continue
@@ -47,6 +62,8 @@ def _merge_live_pan_apis(catalog: List[dict], live_names: List[str]) -> List[dic
             "currency": "INR",
             "documentation": None,
             "source": "pan",
+            "pan_status": "live",
+            "pan_collection": f"result_{name}",
         })
     merged.sort(key=lambda item: (item.get("name") or "").lower())
     return merged
@@ -163,17 +180,17 @@ async def get_api(
 async def create_api(
     body: ApiCreateRequest,
     db=Depends(get_database),
-    response_db=Depends(get_response_database),
     admin=Depends(get_current_admin),
 ):
     """Create a new API in the catalog. Admin only."""
-    api_name = body.name.strip()
-    if not await is_valid_api_name(api_name, response_db):
+    api_name = body.name.strip().lower()
+    if not is_catalog_api_name(api_name):
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail=(
-                f"API name '{api_name}' does not have a live PAN collection "
-                f"(expected result_{api_name}). Create the collection first."
+                f"API name '{api_name}' is invalid. Use lowercase letters, numbers, "
+                f"and underscores (e.g. test, rc_data). PAN collection will be "
+                f"result_{api_name} when created."
             ),
         )
 
@@ -188,7 +205,7 @@ async def create_api(
 
     now = datetime.now(timezone.utc)
     doc = {
-        "name": body.name.strip(),
+        "name": api_name,
         "description": body.description.strip(),
         "category": body.category.strip().lower(),
         "endpoint": body.endpoint.strip(),
@@ -218,7 +235,6 @@ async def update_api(
     api_id: str,
     body: ApiUpdateRequest,
     db=Depends(get_database),
-    response_db=Depends(get_response_database),
     admin=Depends(get_current_admin),
 ):
     """Update an existing API in the catalog. Admin only."""
@@ -244,14 +260,16 @@ async def update_api(
     if not update_data:
         return BaseResponse(success=True, message="No changes to apply.")
 
-    if "name" in update_data and not await is_valid_api_name(
-        update_data["name"].strip(), response_db
-    ):
+    if "name" in update_data:
+        update_data["name"] = update_data["name"].strip().lower()
+
+    if "name" in update_data and not is_catalog_api_name(update_data["name"]):
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail=(
-                f"API name '{update_data['name']}' does not have a live PAN collection. "
-                "Create the collection first."
+                f"API name '{update_data['name']}' is invalid. Use lowercase letters, "
+                f"numbers, and underscores. PAN collection will be "
+                f"result_{update_data['name'].strip()} when created."
             ),
         )
 

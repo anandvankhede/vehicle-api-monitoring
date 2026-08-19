@@ -51,8 +51,10 @@ async def _resolve_scope(db, response_db, client_id: str, api_name: str):
     Returns (mapping_or_none, api_name_normalized). If client_id == "all" the
     mapping is None (aggregate across all clients).
     """
-    if api_name != "all" and not await analytics.is_valid_api_name(api_name, response_db):
-        raise HTTPException(status_code=400, detail="Unknown api_name.")
+    if api_name != "all":
+        from app.services.api_collections import is_registered_api_name
+        if not await is_registered_api_name(db, api_name, response_db):
+            raise HTTPException(status_code=400, detail="Unknown api_name.")
     if client_id in ("all", None, ""):
         return None, api_name
     mapping = await analytics.resolve_user_mapping(db, client_id)

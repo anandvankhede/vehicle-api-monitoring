@@ -23,7 +23,7 @@ from app.schemas.client import (
 )
 from app.schemas.common import BaseResponse, ErrorResponse
 from app.services.client_service import ClientService
-from app.services.api_collections import is_valid_api_name
+from app.services.api_collections import is_registered_api_name
 
 router = APIRouter(prefix="/api-access", tags=["API Access"])
 
@@ -76,10 +76,10 @@ async def assign_api(
         - status:                        "Active" | "Suspended"
     """
     try:
-        if not await is_valid_api_name(body.api_name, response_db):
+        if not await is_registered_api_name(db, body.api_name, response_db):
             raise ValueError(
-                f"API '{body.api_name}' has no live PAN collection "
-                f"(expected result_{body.api_name})."
+                f"API '{body.api_name}' is not registered. Add it in API Management "
+                f"first (PAN collection result_{body.api_name} can be created later)."
             )
         result = await client_service.assign_api(db, body.model_dump())
         return result

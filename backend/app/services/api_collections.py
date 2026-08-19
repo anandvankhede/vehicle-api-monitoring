@@ -14,6 +14,7 @@ calling list_collection_names() on every dashboard request.
 
 from __future__ import annotations
 
+import re
 import time
 from typing import Dict, List, Optional, Set, Tuple
 
@@ -24,7 +25,24 @@ RESULT_COLLECTION_PREFIX = "result_"
 # api_name -> collection_name (only for non-standard PAN collection names)
 API_COLLECTION_OVERRIDES: Dict[str, str] = {}
 
+# Lowercase snake_case application API names (maps to result_{api_name} on PAN).
+_CATALOG_API_NAME_RE = re.compile(r"^[a-z][a-z0-9_]*$")
+
 _collection_cache: Optional[Tuple[float, List[str]]] = None
+
+
+def is_catalog_api_name(api_name: str) -> bool:
+    """
+    True when api_name is a valid application API identifier.
+
+    Catalog entries and client assignments use this name; PAN stores responses
+    in collection ``result_{api_name}`` when that collection is created.
+    """
+    if not api_name or api_name == "all":
+        return False
+    if len(api_name) > 100:
+        return False
+    return bool(_CATALOG_API_NAME_RE.match(api_name.strip()))
 
 
 def is_response_collection(collection_name: str) -> bool:
@@ -128,11 +146,29 @@ async def get_live_api_collection_map(response_db) -> Dict[str, str]:
     return result
 
 
-async def is_valid_api_name(api_name: str, response_db=None) -> bool:
-    """True when api_name maps to a PAN collection that currently exists."""
-    if not api_name or api_name == "all":
+async def is_live_pan_api(api_name: str, response_db=None) -> bool:
+    """True when api_name has a matching collection on the PAN database right now."""
+    if not is_catalog_api_name(api_name):
         return False
     if response_db is None:
         return collection_for_api_name(api_name) is not None
     live = set(await get_live_pan_api_names(response_db))
     return api_name in live
+
+
+async def is_valid_api_name(api_name: str, response_db=None) -> bool:
+    """Alias for live PAN check (used by analytics query endpoints)."""
+    return await is_live_pan_api(api_name, response_db)
+
+
+async def is_registered_api_name(db, api_name: str, response_db=None) -> bool:
+    """
+    True when the API is known to the app: catalog entry and/or live PAN collection.
+
+    Used when creating catalog entries or assigning APIs before PAN data exists.
+    """
+    if not is_catalog_api_name(api_name):
+        return False
+    if await db["apis"].find_one({"name": api_name}, {"_id": 1}):
+        return True
+    return await is_live_pan_api(api_name, response_db)

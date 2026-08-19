@@ -41,6 +41,8 @@ from app.utils.dashboard_time import (
 from app.services.api_collections import (
     get_response_collection_for_api,
     get_live_pan_api_names,
+    is_catalog_api_name,
+    is_live_pan_api,
     is_valid_api_name,
 )
 from app.services.response_db_guard import pan_aggregate, pan_count_documents, pan_find_to_list
@@ -126,8 +128,8 @@ async def resolve_api_names_for_scope(
     """
     APIs available for dashboard charts for the selected scope.
 
-    - all users  -> PAN APIs whose collections currently exist
-    - one client -> assigned APIs whose PAN collections currently exist
+    - all users  -> live PAN APIs (collections that exist now)
+    - one client -> all assigned APIs (shows 0 until result_{name} is created)
     """
     scope = await resolve_query_scope(db, client_id, response_db=response_db)
     return scope["api_names"]
@@ -165,10 +167,12 @@ async def resolve_query_scope(
         }
 
     client = await db["clients"].find_one({"_id": mapping.get("client_id")})
+    assigned = [
+        n for n in (mapping.get("apis") or [])
+        if is_catalog_api_name(n)
+    ]
     return {
-        "api_names": sorted(
-            n for n in (mapping.get("apis") or []) if n in live_names
-        ),
+        "api_names": sorted(assigned),
         "key_scope": mapping.get("access_key"),
         "client_name": (client or {}).get(
             "company_name", mapping.get("company_name", "Unknown")
@@ -221,23 +225,31 @@ async def _resolve_api_name(
     api_name: Optional[str] = None,
     response_db=None,
 ) -> Optional[str]:
-    """Resolve catalog id or api_name to a live PAN api_name."""
-    live = set(await get_live_pan_api_names(response_db))
-    if api_name and api_name in live:
-        return api_name
-    if api_id and api_id in live:
-        return api_id
-    if not api_id or api_id == "all":
-        return None
-    try:
-        doc = await db["apis"].find_one({"_id": ObjectId(api_id)})
-        if doc and doc.get("name") in live:
+    """Resolve catalog id or api_name to an application api_name."""
+    async def _accept(name: Optional[str]) -> Optional[str]:
+        if not name or not is_catalog_api_name(name):
+            return None
+        if await is_live_pan_api(name, response_db):
+            return name
+        doc = await db["apis"].find_one({"name": name}, {"_id": 1})
+        return name if doc else None
+
+    if api_name:
+        resolved = await _accept(api_name)
+        if resolved:
+            return resolved
+    if api_id and api_id != "all":
+        if await _accept(api_id):
+            return api_id
+        try:
+            doc = await db["apis"].find_one({"_id": ObjectId(api_id)}, {"name": 1})
+            if doc and doc.get("name"):
+                return doc["name"]
+        except Exception:
+            pass
+        doc = await db["apis"].find_one({"name": api_id}, {"name": 1})
+        if doc and doc.get("name"):
             return doc["name"]
-    except Exception:
-        pass
-    doc = await db["apis"].find_one({"name": api_id})
-    if doc and doc.get("name") in live:
-        return doc["name"]
     return None
 
 
@@ -1249,7 +1261,6 @@ async def get_client_analytics_stats(
 
     # Build per (client, api) rows for the resolved scope.
     records: List[dict] = []
-    live_names = set(await get_live_pan_api_names(response_db))
     for mapping in mappings:
         if not isinstance(mapping, dict):
             continue
@@ -1260,7 +1271,7 @@ async def get_client_analytics_stats(
             names = [api_name_filter] if api_name_filter in assigned else []
         else:
             names = list(assigned)
-        names = [n for n in names if n in live_names]
+        names = [n for n in names if is_catalog_api_name(n)]
         if not names:
             continue
         records.extend(await _counts_for_client(mapping, names))
