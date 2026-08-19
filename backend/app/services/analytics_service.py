@@ -9,7 +9,7 @@ aggregated counts/graph points.
 Flow for a selected client + API:
     username/client_id
         -> user_mapping (client_id, access_key, apis[])
-        -> api_name -> API_COLLECTION_MAP -> response collection
+        -> api_name -> result_{api_name} PAN collection (discovered live)
         -> query { access_key, created_time range }
         -> read response.response_code (and fallbacks)
         -> aggregate
@@ -39,7 +39,6 @@ from app.utils.dashboard_time import (
     to_dashboard_naive,
 )
 from app.services.api_collections import (
-    API_COLLECTION_MAP,
     get_response_collection_for_api,
     get_live_pan_api_names,
     is_valid_api_name,
@@ -219,22 +218,24 @@ async def _resolve_api_name(
     db,
     api_id: Optional[str] = None,
     api_name: Optional[str] = None,
+    response_db=None,
 ) -> Optional[str]:
-    """Resolve catalog id or api_name to a PAN api_name."""
-    if api_name and api_name in API_COLLECTION_MAP:
+    """Resolve catalog id or api_name to a live PAN api_name."""
+    live = set(await get_live_pan_api_names(response_db))
+    if api_name and api_name in live:
         return api_name
-    if api_id and api_id in API_COLLECTION_MAP:
+    if api_id and api_id in live:
         return api_id
     if not api_id or api_id == "all":
         return None
     try:
         doc = await db["apis"].find_one({"_id": ObjectId(api_id)})
-        if doc and doc.get("name") in API_COLLECTION_MAP:
+        if doc and doc.get("name") in live:
             return doc["name"]
     except Exception:
         pass
     doc = await db["apis"].find_one({"name": api_id})
-    if doc and doc.get("name") in API_COLLECTION_MAP:
+    if doc and doc.get("name") in live:
         return doc["name"]
     return None
 
@@ -862,7 +863,7 @@ async def get_api_usage_stats(
     if not db_manager.response_db_ready:
         return empty
 
-    api_name = await _resolve_api_name(db, api_id)
+    api_name = await _resolve_api_name(db, api_id, response_db=response_db)
     if not api_name:
         raise ValueError("API not found")
 
@@ -1151,7 +1152,7 @@ async def get_client_analytics_stats(
     # Resolve the optional API filter to an application api_name.
     api_name_filter = None
     if api_id and api_id != "all":
-        api_name_filter = await _resolve_api_name(db, api_id)
+        api_name_filter = await _resolve_api_name(db, api_id, response_db=response_db)
 
     api_docs = await db["apis"].find().to_list(length=None)
     name_to_api = {d.get("name"): d for d in api_docs if d.get("name")}
@@ -1247,6 +1248,7 @@ async def get_client_analytics_stats(
 
     # Build per (client, api) rows for the resolved scope.
     records: List[dict] = []
+    live_names = set(await get_live_pan_api_names(response_db))
     for mapping in mappings:
         if not isinstance(mapping, dict):
             continue
@@ -1257,7 +1259,7 @@ async def get_client_analytics_stats(
             names = [api_name_filter] if api_name_filter in assigned else []
         else:
             names = list(assigned)
-        names = [n for n in names if n in API_COLLECTION_MAP]
+        names = [n for n in names if n in live_names]
         if not names:
             continue
         records.extend(await _counts_for_client(mapping, names))
@@ -1388,7 +1390,7 @@ async def export_client_analytics_detail(
     if not client_id or client_id == "all":
         raise ValueError("client_id is required for detail export")
 
-    resolved_api = await _resolve_api_name(db, api_id, api_name)
+    resolved_api = await _resolve_api_name(db, api_id, api_name, response_db=response_db)
     if not resolved_api:
         raise ValueError("A valid api_id or api_name is required for detail export")
 

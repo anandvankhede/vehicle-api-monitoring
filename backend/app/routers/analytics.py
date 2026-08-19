@@ -35,19 +35,23 @@ async def get_users(db=Depends(get_database), _=Depends(get_current_admin)):
 
 
 @router.get("/apis", responses={401: {"model": ErrorResponse}})
-async def get_apis(db=Depends(get_database), _=Depends(get_current_admin)):
-    """Active API catalog options for the dashboard API filter."""
-    return await analytics.get_dashboard_apis(db)
+async def get_apis(
+    db=Depends(get_database),
+    response_db=Depends(get_response_database),
+    _=Depends(get_current_admin),
+):
+    """Active API options discovered from live PAN collections."""
+    return await analytics.get_dashboard_apis(db, response_db=response_db)
 
 
-async def _resolve_scope(db, client_id: str, api_name: str):
+async def _resolve_scope(db, response_db, client_id: str, api_name: str):
     """
     Resolve the user + API query scope.
 
     Returns (mapping_or_none, api_name_normalized). If client_id == "all" the
     mapping is None (aggregate across all clients).
     """
-    if api_name != "all" and not analytics.is_valid_api_name(api_name):
+    if api_name != "all" and not await analytics.is_valid_api_name(api_name, response_db):
         raise HTTPException(status_code=400, detail="Unknown api_name.")
     if client_id in ("all", None, ""):
         return None, api_name
@@ -70,7 +74,7 @@ async def get_summary(
     if time_filter not in VALID_TIME_FILTERS:
         time_filter = "last_7_days"
     try:
-        mapping, api_name = await _resolve_scope(db, client_id, api_name)
+        mapping, api_name = await _resolve_scope(db, response_db, client_id, api_name)
         if mapping:
             return await analytics.get_usage_summary(
                 response_db, mapping["access_key"], mapping.get("apis", []),
@@ -113,7 +117,7 @@ async def get_graph(
     if time_filter not in VALID_TIME_FILTERS:
         time_filter = "last_7_days"
     try:
-        mapping, api_name = await _resolve_scope(db, client_id, api_name)
+        mapping, api_name = await _resolve_scope(db, response_db, client_id, api_name)
         if mapping:
             return await analytics.get_usage_by_date(
                 response_db, mapping["access_key"], mapping.get("apis", []),

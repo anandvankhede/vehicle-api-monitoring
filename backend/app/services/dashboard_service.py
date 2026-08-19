@@ -21,7 +21,7 @@ from bson import ObjectId
 from datetime import datetime, timezone, timedelta
 from typing import List, Optional, Dict, Any
 
-from app.services.api_collections import API_COLLECTION_MAP
+from app.services.api_collections import get_live_pan_api_names
 
 
 def _oid(id_str: str) -> ObjectId:
@@ -64,7 +64,7 @@ class DashboardService:
     # Dashboard summary stats
     # ------------------------------------------------------------------
 
-    async def get_dashboard_stats(self, db):
+    async def get_dashboard_stats(self, db, response_db=None):
         """
         Return summary stats: total clients, total APIs, and
         counts of healthy vs. degraded APIs.
@@ -73,7 +73,10 @@ class DashboardService:
         computed from usage_reports.
         """
         total_clients = await db["clients"].count_documents({})
-        total_apis = len(API_COLLECTION_MAP)
+        if response_db is not None:
+            total_apis = len(await get_live_pan_api_names(response_db))
+        else:
+            total_apis = await db["apis"].count_documents({})
 
         # Aggregate usage by API name to compute success rates (last 30 days)
         now = datetime.now(timezone.utc)

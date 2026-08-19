@@ -12,16 +12,44 @@ from typing import List, Optional
 from datetime import datetime, timezone
 from pydantic import BaseModel, Field
 
-from app.database import get_database
+from app.database import get_database, get_response_database
 from app.dependencies.auth import get_current_admin, get_current_user_optional
 from app.schemas.client import ApiInfoRead, ApiInfoDetailRead
 from app.schemas.common import ErrorResponse, BaseResponse
 from app.services.client_service import ClientService
-from app.services.api_collections import is_valid_api_name
+from app.services.api_collections import get_live_pan_api_names, is_valid_api_name
 
 router = APIRouter(prefix="/api-info", tags=["API Catalog"])
 
 client_service = ClientService()
+
+
+def _merge_live_pan_apis(catalog: List[dict], live_names: List[str]) -> List[dict]:
+    """Include live PAN APIs in the catalog list without persisting them."""
+    catalog_names = {item.get("name") for item in catalog if item.get("name")}
+    merged = list(catalog)
+    for name in live_names:
+        if name in catalog_names:
+            continue
+        merged.append({
+            "id": name,
+            "name": name,
+            "description": f"Discovered from PAN collection result_{name}",
+            "category": "vehicle",
+            "endpoint": f"/{name}",
+            "method": "POST",
+            "headers": [],
+            "request_schema": None,
+            "response_schema": None,
+            "is_active": True,
+            "pricing_success": 0.5,
+            "pricing_not_found": 0.5,
+            "currency": "INR",
+            "documentation": None,
+            "source": "pan",
+        })
+    merged.sort(key=lambda item: (item.get("name") or "").lower())
+    return merged
 
 
 # ============================================================================
@@ -68,13 +96,16 @@ class ApiUpdateRequest(BaseModel):
 )
 async def list_apis(
     db=Depends(get_database),
+    response_db=Depends(get_response_database),
     _=Depends(get_current_user_optional),
 ):
     """
-    List all available APIs from the catalog.
+    List APIs from the catalog merged with live PAN-discovered APIs.
     """
-    result = await client_service.get_all_apis(db)
-    return {"data": result, "total": len(result)}
+    catalog = await client_service.get_all_apis(db)
+    live_names = await get_live_pan_api_names(response_db)
+    merged = _merge_live_pan_apis(catalog, live_names)
+    return {"data": merged, "total": len(merged)}
 
 
 @router.get(
@@ -85,6 +116,7 @@ async def list_apis(
 async def get_api(
     api_id: str,
     db=Depends(get_database),
+    response_db=Depends(get_response_database),
     _=Depends(get_current_user_optional),
 ):
     """
@@ -94,15 +126,31 @@ async def get_api(
     try:
         doc = await db["apis"].find_one({"_id": ObjectId(api_id)})
     except Exception:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="API not found",
-        )
+        doc = None
     if doc is None:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="API not found",
-        )
+        live_names = await get_live_pan_api_names(response_db)
+        if api_id not in live_names:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="API not found",
+            )
+        return {
+            "id": api_id,
+            "name": api_id,
+            "description": f"Discovered from PAN collection result_{api_id}",
+            "category": "vehicle",
+            "endpoint": f"/{api_id}",
+            "method": "POST",
+            "headers": [],
+            "request_schema": None,
+            "response_schema": None,
+            "is_active": True,
+            "pricing_success": 0.5,
+            "pricing_not_found": 0.5,
+            "currency": "INR",
+            "documentation": None,
+            "source": "pan",
+        }
     from app.services.client_service import _serialize
     return _serialize(doc)
 
@@ -115,16 +163,17 @@ async def get_api(
 async def create_api(
     body: ApiCreateRequest,
     db=Depends(get_database),
+    response_db=Depends(get_response_database),
     admin=Depends(get_current_admin),
 ):
     """Create a new API in the catalog. Admin only."""
     api_name = body.name.strip()
-    if not is_valid_api_name(api_name):
+    if not await is_valid_api_name(api_name, response_db):
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail=(
-                f"API name '{api_name}' is not registered in API_COLLECTION_MAP. "
-                "Add the PAN collection mapping in api_collections.py first, then create the catalog entry."
+                f"API name '{api_name}' does not have a live PAN collection "
+                f"(expected result_{api_name}). Create the collection first."
             ),
         )
 
@@ -169,6 +218,7 @@ async def update_api(
     api_id: str,
     body: ApiUpdateRequest,
     db=Depends(get_database),
+    response_db=Depends(get_response_database),
     admin=Depends(get_current_admin),
 ):
     """Update an existing API in the catalog. Admin only."""
@@ -194,12 +244,14 @@ async def update_api(
     if not update_data:
         return BaseResponse(success=True, message="No changes to apply.")
 
-    if "name" in update_data and not is_valid_api_name(update_data["name"].strip()):
+    if "name" in update_data and not await is_valid_api_name(
+        update_data["name"].strip(), response_db
+    ):
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail=(
-                f"API name '{update_data['name']}' is not registered in API_COLLECTION_MAP. "
-                "Update api_collections.py first."
+                f"API name '{update_data['name']}' does not have a live PAN collection. "
+                "Create the collection first."
             ),
         )
 

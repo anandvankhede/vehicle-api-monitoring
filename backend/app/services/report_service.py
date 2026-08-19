@@ -156,8 +156,12 @@ class ReportService:
         if not mapping:
             return []
         access_key = mapping.get("access_key")
-        from app.services.api_collections import API_COLLECTION_MAP
-        names = [n for n in (mapping.get("apis") or []) if n in API_COLLECTION_MAP]
+        from app.services.api_collections import (
+            get_live_pan_api_names,
+            get_response_collection_for_api,
+        )
+        live = set(await get_live_pan_api_names(response_db))
+        names = [n for n in (mapping.get("apis") or []) if n in live]
         if not access_key or not names:
             return []
 
@@ -175,7 +179,9 @@ class ReportService:
         day_map = {}
 
         async def _agg(name):
-            coll = API_COLLECTION_MAP[name]
+            coll = get_response_collection_for_api(name)
+            if not coll:
+                return
             pipeline = [
                 {"$match": {"access_key": access_key,
                             "created_time": {"$gte": start_str, "$lt": end_str}}},
@@ -243,8 +249,12 @@ class ReportService:
         if not mapping:
             return None
         access_key = mapping.get("access_key")
-        from app.services.api_collections import API_COLLECTION_MAP
-        names = [n for n in (mapping.get("apis") or []) if n in API_COLLECTION_MAP]
+        from app.services.api_collections import (
+            get_live_pan_api_names,
+            get_response_collection_for_api,
+        )
+        live = set(await get_live_pan_api_names(response_db))
+        names = [n for n in (mapping.get("apis") or []) if n in live]
         if not access_key or not names:
             return None
 
@@ -277,7 +287,9 @@ class ReportService:
         day_counts = {}
 
         async def _agg(name):
-            coll = API_COLLECTION_MAP[name]
+            coll = get_response_collection_for_api(name)
+            if not coll:
+                return
             pipeline = [
                 {"$match": {"access_key": access_key,
                             "created_time": {"$gte": start_str, "$lt": end_str}}},

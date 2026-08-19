@@ -32,6 +32,7 @@ dashboard_service = DashboardService()
 )
 async def get_dashboard_stats(
     db=Depends(get_database),
+    response_db=Depends(get_response_database),
     _=Depends(get_current_admin),
 ):
     """
@@ -41,7 +42,7 @@ async def get_dashboard_stats(
         - healthyApisCount
         - degradedApisCount
     """
-    result = await dashboard_service.get_dashboard_stats(db)
+    result = await dashboard_service.get_dashboard_stats(db, response_db=response_db)
     return {
         "totalClients": result["total_clients"],
         "totalApis": result["total_apis"],
@@ -57,6 +58,7 @@ async def get_dashboard_stats(
 )
 async def get_dashboard_analytics(
     db=Depends(get_database),
+    response_db=Depends(get_response_database),
     _=Depends(get_current_admin),
 ):
     """
@@ -65,9 +67,9 @@ async def get_dashboard_analytics(
         - userOptions: List of clients for the global filter
         - apiOptions: List of APIs for the monitoring dropdown
     """
-    summary = await dashboard_service.get_dashboard_stats(db)
+    summary = await dashboard_service.get_dashboard_stats(db, response_db=response_db)
     user_options = await dashboard_service.get_user_options(db)
-    api_options = await dashboard_service.get_api_options(db)
+    api_options = await dashboard_service.get_api_options(db, response_db=response_db)
 
     return {
         "summary": {

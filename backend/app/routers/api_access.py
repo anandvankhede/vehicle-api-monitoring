@@ -14,7 +14,7 @@ Endpoints:
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 
-from app.database import get_database
+from app.database import get_database, get_response_database
 from app.dependencies.auth import get_current_admin, get_current_user
 from app.schemas.client import (
     ApiAccessCreate,
@@ -23,6 +23,7 @@ from app.schemas.client import (
 )
 from app.schemas.common import BaseResponse, ErrorResponse
 from app.services.client_service import ClientService
+from app.services.api_collections import is_valid_api_name
 
 router = APIRouter(prefix="/api-access", tags=["API Access"])
 
@@ -57,6 +58,7 @@ async def list_api_access(
 async def assign_api(
     body: ApiAccessCreate,
     db=Depends(get_database),
+    response_db=Depends(get_response_database),
     _=Depends(get_current_admin),
 ):
     """
@@ -74,6 +76,11 @@ async def assign_api(
         - status:                        "Active" | "Suspended"
     """
     try:
+        if not await is_valid_api_name(body.api_name, response_db):
+            raise ValueError(
+                f"API '{body.api_name}' has no live PAN collection "
+                f"(expected result_{body.api_name})."
+            )
         result = await client_service.assign_api(db, body.model_dump())
         return result
     except ValueError as e:

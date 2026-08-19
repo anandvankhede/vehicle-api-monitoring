@@ -20,7 +20,7 @@ from typing import Optional
 from urllib.parse import urlparse
 
 from app.config import settings
-from app.services.api_collections import RESPONSE_COLLECTIONS
+from app.services.api_collections import get_live_pan_api_names, get_live_response_collections
 
 
 def _mask_mongo_url(url: str) -> str:
@@ -186,33 +186,24 @@ async def verify_response_database() -> bool:
         )
         return False
 
-    available = [c for c in RESPONSE_COLLECTIONS if c in collections]
-    missing = [c for c in RESPONSE_COLLECTIONS if c not in collections]
+    available = await get_live_response_collections(response_db)
 
     if not available:
         print(
-            f"[WARN] Response database '{db_name}' is reachable but no mapped collections were found.\n"
+            f"[WARN] Response database '{db_name}' is reachable but no result_* collections were found.\n"
             f"  Connection: {target}\n"
-            f"  Expected (from API_COLLECTION_MAP): {', '.join(RESPONSE_COLLECTIONS) or '(none)'}\n"
             f"  Found in database: {', '.join(sorted(collections)) or '(none)'}\n"
-            f"  Dashboard analytics will be empty until collections are created."
+            f"  Dashboard analytics will be empty until PAN collections are created."
         )
         return False
 
     db_manager.response_db_ready = True
-
-    if missing:
-        print(
-            f"[OK] Response database '{db_name}' ready "
-            f"({len(available)}/{len(RESPONSE_COLLECTIONS)} mapped collections) - {target}\n"
-            f"  Available: {', '.join(available)}\n"
-            f"  Missing (skipped): {', '.join(missing)}"
-        )
-    else:
-        print(
-            f"[OK] Response database '{db_name}' verified "
-            f"({len(available)} collections, read-only) - {target}"
-        )
+    api_names = await get_live_pan_api_names(response_db)
+    print(
+        f"[OK] Response database '{db_name}' ready "
+        f"({len(api_names)} APIs from {len(available)} collections) - {target}\n"
+        f"  APIs: {', '.join(api_names)}"
+    )
     return True
 
 
