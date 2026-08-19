@@ -15,7 +15,7 @@ Endpoints:
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from typing import Optional
 
-from app.database import get_database, get_response_database
+from app.database import get_database, get_response_database, db_manager
 from app.dependencies.auth import get_current_admin
 from app.schemas.common import ErrorResponse
 from app.services.dashboard_service import DashboardService
@@ -47,6 +47,7 @@ async def get_dashboard_stats(
         "totalApis": result["total_apis"],
         "healthyApisCount": result["healthy_apis_count"],
         "degradedApisCount": result["degraded_apis_count"],
+        "responseDbAvailable": db_manager.response_db_ready,
     }
 
 

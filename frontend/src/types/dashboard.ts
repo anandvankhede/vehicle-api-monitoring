@@ -3,6 +3,7 @@ export interface DashboardSummary {
   totalApis: number;
   healthyApisCount?: number;
   degradedApisCount?: number;
+  responseDbAvailable?: boolean;
 }
 
 export interface UserOption {
@@ -40,7 +41,7 @@ export interface UserApiStats {
   success: number;
   notFound: number;
   failed: number;
-  status: 'healthy' | 'degraded' | 'down';
+  status: 'healthy' | 'degraded' | 'down' | 'no_data';
   trendPercentage: number;
   trendDirection: 'up' | 'down' | 'stable';
   avgResponseTimeMs: number;

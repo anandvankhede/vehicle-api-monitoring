@@ -31,6 +31,7 @@ from typing import List, Optional, Dict, Any, Tuple
 
 from bson import ObjectId
 
+from app.database import db_manager
 from app.utils.dashboard_time import (
     fmt_created_time,
     now_dashboard,
@@ -408,6 +409,9 @@ async def get_user_api_stats(
         {id, name, category, totalHits, success, notFound, failed,
          status, trendPercentage, trendDirection, avgResponseTimeMs}
     """
+    if not db_manager.response_db_ready:
+        return []
+
     # The frontend sends 'last_month'; the range helper uses 'last_30_days'.
     if time_filter == "last_month":
         time_filter = "last_30_days"
@@ -487,10 +491,11 @@ async def get_user_api_stats(
         prev_total = (prev.get("SUCCESS", 0) + prev.get("NOT_FOUND", 0)
                       + prev.get("FAILED", 0) + prev.get("OTHER", 0))
 
-        rate = (success / total * 100) if total > 0 else 100
-        if rate >= 95:
+        if total == 0:
+            status = "no_data"
+        elif (success / total * 100) >= 95:
             status = "healthy"
-        elif rate >= 80:
+        elif (success / total * 100) >= 80:
             status = "degraded"
         else:
             status = "down"
@@ -520,7 +525,7 @@ async def get_user_api_stats(
             "trendDirection": direction,
             "avgResponseTimeMs": int(round(avg_rt)) if avg_rt else 0,
         })
-    return results
+    return [r for r in results if r["totalHits"] > 0]
 
 # -----------------------------------------------------------------------------
 # Global API monitoring (Main API Monitoring pie + line charts)
@@ -731,6 +736,20 @@ async def get_api_usage_stats(
         {apiId, apiName, timeFilter, distribution[], trendData[],
          totalHits, successRate, avgLatencyMs, uptimePercentage}
     """
+    empty = {
+        "apiId": api_id,
+        "apiName": api_id,
+        "timeFilter": time_filter,
+        "distribution": [],
+        "trendData": [],
+        "totalHits": 0,
+        "successRate": 0,
+        "avgLatencyMs": 0,
+        "uptimePercentage": 0,
+    }
+    if not db_manager.response_db_ready:
+        return empty
+
     # Resolve the API catalog doc (mock ids fall back to matching by name).
     api_doc = None
     try:

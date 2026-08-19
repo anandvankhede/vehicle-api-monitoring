@@ -17,7 +17,7 @@ import { Grid, AlertCircle, RefreshCw } from 'lucide-react';
 
 export const Dashboard: React.FC = () => {
   // Summary Stats State (Section 1)
-  const [, setSummary] = useState<DashboardSummary | null>(null);
+  const [summary, setSummary] = useState<DashboardSummary | null>(null);
   const [, setIsSummaryLoading] = useState<boolean>(true);
 
   // User Filter & Grid State (Section 2 & 3)
@@ -269,9 +269,15 @@ export const Dashboard: React.FC = () => {
             /* Empty State */
             <div className="rounded-xl p-6 text-center space-y-2 theme-card">
               <AlertCircle className="w-7 h-7 mx-auto" style={{ color: 'var(--text-muted)' }} />
-              <h3 className="text-xs font-bold" style={{ color: 'var(--text-primary)' }}>No API Telemetry Found</h3>
+              <h3 className="text-xs font-bold" style={{ color: 'var(--text-primary)' }}>
+                {summary?.responseDbAvailable === false
+                  ? 'Response Database Not Connected'
+                  : 'No API Telemetry Found'}
+              </h3>
               <p className="text-[11px]" style={{ color: 'var(--text-muted)' }}>
-                No API request statistics recorded for {selectedUserLabel} in the selected time range.
+                {summary?.responseDbAvailable === false
+                  ? 'API performance stats come from the response database. Configure RESPONSE_MONGO_URL on the server to enable this section.'
+                  : `No API request statistics recorded for ${selectedUserLabel} in the selected time range.`}
               </p>
             </div>
           ) : (

@@ -53,18 +53,29 @@ export const dashboardService = {
    */
   async getDashboardSummary(): Promise<DashboardSummary> {
     try {
-      const [clients, apis] = await Promise.all([
-        api.getClients().catch(() => ({ data: [], total: 0 })),
-        api.getApiInfo().catch(() => ({ data: [], total: 0 })),
-      ]);
+      const stats = await api.getDashboardStats() as DashboardSummary;
       return {
-        totalClients: clients.total,
-        totalApis: apis.total,
-        healthyApisCount: apis.total,
-        degradedApisCount: 0,
+        totalClients: stats.totalClients ?? 0,
+        totalApis: stats.totalApis ?? 0,
+        healthyApisCount: stats.healthyApisCount ?? 0,
+        degradedApisCount: stats.degradedApisCount ?? 0,
+        responseDbAvailable: stats.responseDbAvailable,
       };
     } catch {
-      return { totalClients: 0, totalApis: 0, healthyApisCount: 0, degradedApisCount: 0 };
+      try {
+        const [clients, apis] = await Promise.all([
+          api.getClients().catch(() => ({ data: [], total: 0 })),
+          api.getApiInfo().catch(() => ({ data: [], total: 0 })),
+        ]);
+        return {
+          totalClients: clients.total,
+          totalApis: apis.total,
+          healthyApisCount: apis.total,
+          degradedApisCount: 0,
+        };
+      } catch {
+        return { totalClients: 0, totalApis: 0, healthyApisCount: 0, degradedApisCount: 0 };
+      }
     }
   },
 

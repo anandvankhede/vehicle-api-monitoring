@@ -67,11 +67,18 @@ export const ApiKpiCard: React.FC<ApiKpiCardProps> = ({ stats, isLoading = false
             Down
           </span>
         );
+      case 'no_data':
+        return (
+          <span className="inline-flex items-center gap-1 px-2 py-0.5 text-[10px] font-semibold rounded-full" style={{ backgroundColor: 'var(--card-inner)', color: 'var(--text-muted)', border: '1px solid var(--border)' }}>
+            <Clock className="w-2.5 h-2.5" />
+            No Data
+          </span>
+        );
     }
   };
 
   // Success rate percentage calculation
-  const successRate = stats.totalHits > 0 ? ((stats.success / stats.totalHits) * 100).toFixed(1) : '100';
+  const successRate = stats.totalHits > 0 ? ((stats.success / stats.totalHits) * 100).toFixed(1) : '0';
 
   if (isLoading) {
     return (
