@@ -8,20 +8,23 @@ Each API response store follows the naming convention:
     MongoDB collection: result_{api_name}
     Application api_name: strip the ``result_`` prefix
 
-When a new ``result_*`` collection is added to the PAN database it is picked
-up automatically for dashboard KPIs, graphs, and client scoping — no code
-changes or server restart required.
-
-Optional manual overrides (non-standard collection names) can be added to
-``API_COLLECTION_OVERRIDES`` without touching the rest of the app.
+Collection names are cached briefly (PAN_COLLECTION_CACHE_SECONDS) to avoid
+calling list_collection_names() on every dashboard request.
 """
 
-from typing import Dict, List, Optional, Set
+from __future__ import annotations
+
+import time
+from typing import Dict, List, Optional, Set, Tuple
+
+from app.config import settings
 
 RESULT_COLLECTION_PREFIX = "result_"
 
 # api_name -> collection_name (only for non-standard PAN collection names)
 API_COLLECTION_OVERRIDES: Dict[str, str] = {}
+
+_collection_cache: Optional[Tuple[float, List[str]]] = None
 
 
 def is_response_collection(collection_name: str) -> bool:
@@ -57,26 +60,46 @@ def _override_collection_to_api() -> Dict[str, str]:
     return {coll: name for name, coll in API_COLLECTION_OVERRIDES.items()}
 
 
-async def get_live_response_collections(response_db) -> List[str]:
-    """Return PAN collection names that currently exist."""
-    if response_db is None:
-        return []
-    try:
-        names = await response_db.list_collection_names()
-    except Exception:
-        return []
+def _collections_from_names(names: List[str]) -> List[str]:
     live = {name for name in names if is_response_collection(name)}
     live.update(API_COLLECTION_OVERRIDES.values())
     return sorted(live)
 
 
-async def get_live_pan_api_names(response_db) -> List[str]:
-    """
-    Return application api_names for all PAN collections that currently exist.
+async def get_live_response_collections(
+    response_db, *, force_refresh: bool = False,
+) -> List[str]:
+    """Return PAN collection names that currently exist (cached)."""
+    global _collection_cache
 
-    Reads collection names on every call so additions/removals are reflected
-    immediately without redeploying.
-    """
+    if response_db is None:
+        return []
+
+    ttl = max(0, settings.PAN_COLLECTION_CACHE_SECONDS)
+    now = time.monotonic()
+    if (
+        not force_refresh
+        and ttl > 0
+        and _collection_cache is not None
+        and (now - _collection_cache[0]) < ttl
+    ):
+        return list(_collection_cache[1])
+
+    try:
+        names = await response_db.list_collection_names()
+    except Exception:
+        if _collection_cache is not None:
+            return list(_collection_cache[1])
+        return []
+
+    live = _collections_from_names(names)
+    if ttl > 0:
+        _collection_cache = (now, live)
+    return live
+
+
+async def get_live_pan_api_names(response_db) -> List[str]:
+    """Return application api_names for all live PAN collections."""
     collections = await get_live_response_collections(response_db)
     existing = set(collections)
     api_names: Set[str] = set()
@@ -92,13 +115,15 @@ async def get_live_pan_api_names(response_db) -> List[str]:
 
 async def get_live_api_collection_map(response_db) -> Dict[str, str]:
     """Return {api_name: collection_name} for all live PAN APIs."""
+    collections = await get_live_response_collections(response_db)
+    existing = set(collections)
     result: Dict[str, str] = {}
-    for coll in await get_live_response_collections(response_db):
+    for coll in collections:
         name = api_name_from_collection(coll)
         if name:
             result[name] = coll
     for api_name, coll in API_COLLECTION_OVERRIDES.items():
-        if coll in set(await get_live_response_collections(response_db)):
+        if coll in existing:
             result[api_name] = coll
     return result
 

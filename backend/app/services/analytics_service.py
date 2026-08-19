@@ -43,6 +43,7 @@ from app.services.api_collections import (
     get_live_pan_api_names,
     is_valid_api_name,
 )
+from app.services.response_db_guard import pan_aggregate, pan_count_documents, pan_find_to_list
 
 # -----------------------------------------------------------------------------
 # Response status normalization
@@ -393,7 +394,7 @@ async def get_usage_summary(
                         "count": {"$sum": 1}}},
         ]
         try:
-            groups = await response_db[coll].aggregate(pipeline).to_list(length=None)
+            groups = await pan_aggregate(response_db[coll], pipeline)
         except Exception:
             return {}
         return _status_map_from_groups(groups)
@@ -459,7 +460,7 @@ async def get_usage_by_date(
             }},
         ]
         try:
-            groups = await response_db[coll].aggregate(pipeline).to_list(length=None)
+            groups = await pan_aggregate(response_db[coll], pipeline)
         except Exception:
             return
         for g in groups:
@@ -577,7 +578,7 @@ async def get_user_api_stats(
             pipeline.append({"$match": {"access_key": key_scope}})
         pipeline.append({"$facet": facet})
         try:
-            docs = await response_db[coll].aggregate(pipeline).to_list(length=None)
+            docs = await pan_aggregate(response_db[coll], pipeline)
         except Exception:
             return {"api_name": name, "current": {}, "previous": {}, "avg_time": []}
         d = docs[0] if docs else {}
@@ -919,7 +920,7 @@ async def get_api_usage_stats(
         }},
     ]
     try:
-        docs = await response_db[coll].aggregate(pipeline).to_list(length=None)
+        docs = await pan_aggregate(response_db[coll], pipeline)
     except Exception:
         docs = []
     d = docs[0] if docs else {}
@@ -1054,7 +1055,7 @@ async def get_client_details_stats(
             }},
         ]
         try:
-            docs = await response_db[coll].aggregate(pipeline).to_list(length=None)
+            docs = await pan_aggregate(response_db[coll], pipeline)
         except Exception:
             return {"name": name, "buckets": [], "avg_time": []}
         d = docs[0] if docs else {}
@@ -1205,7 +1206,7 @@ async def get_client_analytics_stats(
                 }},
             ]
             try:
-                docs = await response_db[coll].aggregate(pipeline).to_list(length=None)
+                docs = await pan_aggregate(response_db[coll], pipeline)
             except Exception:
                 return {"name": name, "counts": {}, "avg": None}
             d = docs[0] if docs else {}
@@ -1432,18 +1433,17 @@ async def export_client_analytics_detail(
     request_field = API_REQUEST_FIELD_MAP.get(resolved_api, "request")
     header_request = f"request.{request_field}"
 
-    total = await response_db[coll].count_documents(match)
+    total = await pan_count_documents(response_db[coll], match)
     truncated = total > MAX_ANALYTICS_EXPORT_ROWS
 
-    cursor = (
-        response_db[coll]
-        .find(match, projection)
-        .sort("created_time", 1)
-        .limit(MAX_ANALYTICS_EXPORT_ROWS)
-        .batch_size(1000)
-        .hint([("access_key", 1), ("created_time", 1)])
+    docs = await pan_find_to_list(
+        response_db[coll],
+        match,
+        projection,
+        sort=[("created_time", 1)],
+        limit=MAX_ANALYTICS_EXPORT_ROWS,
+        hint=[("access_key", 1), ("created_time", 1)],
     )
-    docs = await cursor.to_list(length=MAX_ANALYTICS_EXPORT_ROWS)
     truncated = len(docs) >= MAX_ANALYTICS_EXPORT_ROWS
 
     output = io.StringIO()

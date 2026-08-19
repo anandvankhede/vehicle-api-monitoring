@@ -4,6 +4,7 @@ import { ApiKpiCard } from '../components/ApiKpiCard';
 import { ApiMonitoringSection } from '../components/ApiMonitoringSection';
 import { dashboardService } from '../services/dashboardService';
 import { usePolling } from '../hooks/usePolling';
+import { ENV } from '../config/env';
 import type {
   DashboardSummary,
   UserOption,
@@ -197,8 +198,8 @@ export const Dashboard: React.FC = () => {
     Boolean(selectedApiId) &&
     !(apiTimeFilter === 'custom' && (!apiStartDate || !apiEndDate));
 
-  usePolling(() => loadUserApiStats(true), 5000, !isTrendModalOpen);
-  usePolling(() => loadMonitoringStats(true), 5000, dashboardPollingEnabled);
+  usePolling(() => loadUserApiStats(true), ENV.DASHBOARD_POLL_MS, !isTrendModalOpen);
+  usePolling(() => loadMonitoringStats(true), ENV.DASHBOARD_POLL_MS, dashboardPollingEnabled);
 
   // Reset Filters Handler
   const handleResetUserFilters = () => {

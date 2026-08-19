@@ -7,6 +7,7 @@ import type { ClientDetailsData } from '../types/detailsChart';
 import type { UserOption, ApiTimeFilterValue } from '../types/dashboard';
 import { dashboardService } from '../services/dashboardService';
 import { usePolling } from '../hooks/usePolling';
+import { ENV } from '../config/env';
 import { AlertCircle, RefreshCw } from 'lucide-react';
 
 const DETAIL_TIME_OPTIONS = [
@@ -90,7 +91,7 @@ export const DetailsChart: React.FC = () => {
 
   usePolling(
     () => loadData(true),
-    5000,
+    ENV.DASHBOARD_POLL_MS,
     !isDetailModalOpen && !(timeFilter === 'custom' && (!startDate || !endDate))
   );
 

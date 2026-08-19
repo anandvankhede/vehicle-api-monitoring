@@ -6,6 +6,7 @@ import type { TimeOption } from './TimeFilter';
 import { TrendLineChart, TREND_CHART_QUICK_RANGES } from './TrendLineChart';
 import { detailsChartService } from '../services/detailsChartService';
 import { usePolling } from '../hooks/usePolling';
+import { ENV } from '../config/env';
 import type { ClientApiDetail } from '../types/detailsChart';
 import type { ApiTimeFilterValue } from '../types/dashboard';
 
@@ -23,7 +24,6 @@ const TIME_OPTIONS: TimeOption[] = [
   { value: 'custom', label: 'Custom Range' },
 ];
 
-const POLL_MS = 5000;
 
 interface ApiDetailGraphModalProps {
   open: boolean;
@@ -74,7 +74,7 @@ export const ApiDetailGraphModal: React.FC<ApiDetailGraphModalProps> = ({
     fetchModalData(false);
   }, [open, clientId, detail.apiId, timeFilter, startDate, endDate]);
 
-  usePolling(() => fetchModalData(true), POLL_MS, open);
+  usePolling(() => fetchModalData(true), ENV.DASHBOARD_POLL_MS, open);
 
   const handleEscape = useCallback((e: KeyboardEvent) => {
     if (e.key === 'Escape') onClose();

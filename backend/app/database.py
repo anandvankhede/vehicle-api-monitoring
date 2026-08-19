@@ -19,8 +19,33 @@ from motor.motor_asyncio import AsyncIOMotorClient
 from typing import Optional
 from urllib.parse import urlparse
 
+from pymongo import ReadPreference
+
 from app.config import settings
 from app.services.api_collections import get_live_pan_api_names, get_live_response_collections
+
+_READ_PREFERENCE_MAP = {
+    "primary": ReadPreference.PRIMARY,
+    "primarypreferred": ReadPreference.PRIMARY_PREFERRED,
+    "secondary": ReadPreference.SECONDARY,
+    "secondarypreferred": ReadPreference.SECONDARY_PREFERRED,
+    "nearest": ReadPreference.NEAREST,
+}
+
+
+def _response_client_kwargs() -> dict:
+    """Connection options for the read-only PAN analytics client."""
+    kwargs = {
+        "maxPoolSize": max(1, settings.RESPONSE_DB_MAX_POOL_SIZE),
+        "minPoolSize": 0,
+        "maxIdleTimeMS": 30_000,
+        "serverSelectionTimeoutMS": 5_000,
+        "connectTimeoutMS": 5_000,
+    }
+    pref = (settings.RESPONSE_DB_READ_PREFERENCE or "").strip().lower()
+    if pref in _READ_PREFERENCE_MAP:
+        kwargs["readPreference"] = _READ_PREFERENCE_MAP[pref]
+    return kwargs
 
 
 def _mask_mongo_url(url: str) -> str:
@@ -72,7 +97,10 @@ class Database:
             print(f"[OK] Connected to MongoDB at {settings.MONGO_URL}")
 
         if settings.RESPONSE_MONGO_URL and self.response_client is None:
-            self.response_client = AsyncIOMotorClient(settings.RESPONSE_MONGO_URL)
+            self.response_client = AsyncIOMotorClient(
+                settings.RESPONSE_MONGO_URL,
+                **_response_client_kwargs(),
+            )
             print(
                 f"[OK] Response DB MongoDB configured: {_mask_mongo_url(settings.RESPONSE_MONGO_URL)} "
                 f"(db: {settings.RESPONSE_DATABASE_NAME})"

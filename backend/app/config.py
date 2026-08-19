@@ -78,6 +78,35 @@ class Settings(BaseSettings):
             "When missing or unreachable, the app still starts; response analytics stay empty."
         ),
     )
+    # --- PAN / response DB read load limits (protect shared Mongo with live API) ---
+    RESPONSE_DB_QUERY_MAX_MS: int = Field(
+        default=15_000,
+        env="RESPONSE_DB_QUERY_MAX_MS",
+        description="Max milliseconds per PAN read query; 0 disables the limit.",
+    )
+    RESPONSE_DB_MAX_POOL_SIZE: int = Field(
+        default=5,
+        env="RESPONSE_DB_MAX_POOL_SIZE",
+        description="Max Mongo connections used only for PAN read analytics.",
+    )
+    RESPONSE_DB_MAX_CONCURRENT_QUERIES: int = Field(
+        default=2,
+        env="RESPONSE_DB_MAX_CONCURRENT_QUERIES",
+        description="Max PAN queries running at once across all dashboard requests.",
+    )
+    PAN_COLLECTION_CACHE_SECONDS: int = Field(
+        default=60,
+        env="PAN_COLLECTION_CACHE_SECONDS",
+        description="Cache TTL for list_collection_names() on the PAN database.",
+    )
+    RESPONSE_DB_READ_PREFERENCE: Optional[str] = Field(
+        default=None,
+        env="RESPONSE_DB_READ_PREFERENCE",
+        description=(
+            "Optional Mongo read preference for PAN analytics only: "
+            "primary, primaryPreferred, secondary, secondaryPreferred, nearest."
+        ),
+    )
     DASHBOARD_TIMEZONE: str = Field(
         default="Asia/Kolkata",
         env="DASHBOARD_TIMEZONE",
