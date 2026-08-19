@@ -2,23 +2,23 @@
 API → Response Collection Mapping
 =================================
 
-Central, single source of truth for mapping an application `api_name` to the
-raw API-response collection on the `pan` database.
+Single source of truth for mapping application `api_name` to the raw
+response collection on the external `pan` database.
 
-The frontend must send `api_name` (the application name) — NEVER a raw MongoDB
+When a new API is added on the pan side (e.g. 7 → 9 collections):
+
+    1. Add one line here:  "new_api_name": "result_new_api_name"
+    2. Register the API in the app catalog (`apis` collection) via Admin UI
+       or seed script — same `name` as the key above.
+    3. Ensure the collection already exists on the remote `pan` database
+       (this app never creates pan collections).
+    4. Restart the backend — startup verifies all mapped collections exist.
+
+The frontend must send `api_name` (application name), never a raw MongoDB
 collection name. Backend validates against this map and refuses anything else.
-
-Verified against live data in the `pan` database (all seven collections exist):
-    chassis_to_rc      -> result_chassis_to_rc
-    chassis_to_rc_data -> result_chassis_to_rc_data
-    fastag_01          -> result_fastag_01
-    fastag_02          -> result_fastag_02
-    rc_data            -> result_rc_data
-    rc_to_challan      -> result_rc_to_challan
-    rc_to_mobile       -> result_rc_to_mobile
 """
 
-from typing import Optional
+from typing import List, Optional
 
 API_COLLECTION_MAP = {
     "chassis_to_rc": "result_chassis_to_rc",
@@ -28,10 +28,15 @@ API_COLLECTION_MAP = {
     "rc_data": "result_rc_data",
     "rc_to_challan": "result_rc_to_challan",
     "rc_to_mobile": "result_rc_to_mobile",
+    # Add new APIs below, e.g.:
+    # "new_api": "result_new_api",
 }
 
-# Reverse lookup: collection -> api_name
+# Reverse lookup: pan collection name -> api_name
 COLLECTION_API_MAP = {v: k for k, v in API_COLLECTION_MAP.items()}
+
+# All pan collections this app reads (derived from the map — do not duplicate elsewhere)
+PAN_RESPONSE_COLLECTIONS: List[str] = sorted(set(API_COLLECTION_MAP.values()))
 
 
 def get_response_collection_for_api(api_name: str) -> Optional[str]:
@@ -49,4 +54,8 @@ def get_response_collection_for_api(api_name: str) -> Optional[str]:
 def is_valid_api_name(api_name: str) -> bool:
     """True if api_name is a known application API name."""
     return api_name in API_COLLECTION_MAP
-    
+
+
+def get_all_api_names() -> List[str]:
+    """All registered application API names (sorted)."""
+    return sorted(API_COLLECTION_MAP.keys())

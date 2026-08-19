@@ -20,6 +20,7 @@ from typing import Optional
 from urllib.parse import urlparse
 
 from app.config import settings
+from app.services.api_collections import PAN_RESPONSE_COLLECTIONS
 
 
 class Database:
@@ -133,47 +134,52 @@ async def get_pan_database():
     return db_manager.get_pan_db()
 
 
-# All seven API-response collections on the `pan` database.
-PAN_RESPONSE_COLLECTIONS = [
-    "result_chassis_to_rc",
-    "result_chassis_to_rc_data",
-    "result_fastag_01",
-    "result_fastag_02",
-    "result_rc_data",
-    "result_rc_to_challan",
-    "result_rc_to_mobile",
-]
-
-
-async def ensure_indexes(db) -> None:
+async def verify_pan_database() -> None:
     """
-    Create/verify the indexes required by the dashboard analytics layer.
-
-    Idempotent — safe to run on every startup. Existing equivalent indexes are
-    left untouched; only missing indexes are created. Never drops anything.
-    Third-party API-response indexes on the `pan` database are also created.
-
-    Indexes:
-        api_access.(client_id, api_name)      -> UNIQUE (one subscription/combo)
-        api_access.api_key                    -> NON-unique (one key per client
-                                                 shared across all their APIs)
-        user_mapping.client_id                -> UNIQUE (read-optimized mapping)
-        user_mapping.username                 -> NON-unique lookup
-        pan.<response_collection>.(access_key, created_time) -> NON-unique (dashboard)
+    Confirm the external `pan` database already exists and has the expected
+    collections. The monitoring app must only READ from pan — never create
+    databases, collections, or indexes there (MongoDB creates them on write).
     """
-    # --- api_access: business source of truth for API assignment ---
+    pan_db = db_manager.get_pan_db()
+    db_name = settings.PAN_DATABASE_NAME
+
+    try:
+        collections = await pan_db.list_collection_names()
+    except Exception as exc:
+        raise RuntimeError(
+            f"[FATAL] Cannot access PAN database '{db_name}': {exc}. "
+            f"Check PAN_MONGO_URL and PAN_DATABASE_NAME."
+        ) from exc
+
+    missing = [c for c in PAN_RESPONSE_COLLECTIONS if c not in collections]
+    if missing:
+        raise RuntimeError(
+            f"[FATAL] PAN database '{db_name}' is missing collections: "
+            f"{', '.join(missing)}. "
+            f"Found: {', '.join(collections) or '(none — database may not exist)'}. "
+            f"This app only maps to an existing pan database and will not create it."
+        )
+
+    print(
+        f"[OK] PAN database '{db_name}' verified "
+        f"({len(PAN_RESPONSE_COLLECTIONS)} collections, read-only)"
+    )
+
+
+async def ensure_app_indexes(db) -> None:
+    """
+    Create/verify indexes on the application database only (`vehical_api_monitoring`).
+
+    Idempotent — safe to run on every startup. Never touches the pan database.
+    """
     await db["api_access"].create_index(
         [("client_id", 1), ("api_name", 1)],
         unique=True,
         name="uq_api_access_client_api",
     )
-    # One access key per client is shared across all that client's APIs, so the
-    # api_key index MUST be non-unique.
     await db["api_access"].create_index(
         [("api_key", 1)], name="idx_api_access_api_key"
     )
-
-    # --- user_mapping: read-optimized derived mapping ---
     await db["user_mapping"].create_index(
         [("client_id", 1)], unique=True, name="uq_user_mapping_client_id"
     )
@@ -181,12 +187,9 @@ async def ensure_indexes(db) -> None:
         [("username", 1)], name="idx_user_mapping_username"
     )
 
-    # --- pan response DB: dashboard queries match access_key + created_time ---
-    pan_db = db_manager.get_pan_db()
-    for collection in PAN_RESPONSE_COLLECTIONS:
-        await pan_db[collection].create_index(
-            [("access_key", 1), ("created_time", 1)],
-            name="idx_pan_access_key_created_time",
-        )
+
+async def ensure_indexes(db) -> None:
+    """Backward-compatible alias — app indexes only."""
+    await ensure_app_indexes(db)
 
 

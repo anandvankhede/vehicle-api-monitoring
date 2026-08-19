@@ -15,7 +15,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 
 from app.config import settings
-from app.database import db_manager, ensure_indexes
+from app.database import db_manager, ensure_app_indexes, verify_pan_database
 from app.routers import (
     auth,
     client,
@@ -124,12 +124,17 @@ app.include_router(audit_log.router, prefix="/api")
 
 @app.on_event("startup")
 async def startup():
-    """Connect to MongoDB on startup and ensure analytics indexes."""
+    """Connect to MongoDB, verify pan (read-only), ensure app indexes."""
     db_manager.connect()
     try:
-        await ensure_indexes(db_manager.get_db())
+        await verify_pan_database()
+    except RuntimeError as exc:
+        print(str(exc))
+        raise
+    try:
+        await ensure_app_indexes(db_manager.get_db())
     except Exception as exc:  # pragma: no cover - non-fatal
-        print(f"[WARN] Index setup warning: {exc}")
+        print(f"[WARN] App index setup warning: {exc}")
 
 
 @app.on_event("shutdown")
