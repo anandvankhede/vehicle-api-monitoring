@@ -32,7 +32,7 @@ def to_dashboard_naive(dt: datetime) -> datetime:
 
 
 def fmt_created_time(dt: datetime) -> str:
-    """Format a datetime as the pan.created_time string representation."""
+    """Format a datetime as the response DB created_time string representation."""
     return to_dashboard_naive(dt).strftime(_CREATED_TIME_FMT)
 
 

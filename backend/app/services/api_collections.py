@@ -3,15 +3,15 @@ API → Response Collection Mapping
 =================================
 
 Single source of truth for mapping application `api_name` to the raw
-response collection on the external `pan` database.
+response collection on the external response database.
 
-When a new API is added on the pan side (e.g. 7 → 9 collections):
+When a new API is added on the response DB side (e.g. 7 → 9 collections):
 
     1. Add one line here:  "new_api_name": "result_new_api_name"
     2. Register the API in the app catalog (`apis` collection) via Admin UI
        or seed script — same `name` as the key above.
-    3. Ensure the collection already exists on the remote `pan` database
-       (this app never creates pan collections).
+    3. Ensure the collection already exists on the remote response database
+       (this app never creates response collections).
     4. Restart the backend — startup verifies all mapped collections exist.
 
 The frontend must send `api_name` (application name), never a raw MongoDB
@@ -32,16 +32,16 @@ API_COLLECTION_MAP = {
     # "new_api": "result_new_api",
 }
 
-# Reverse lookup: pan collection name -> api_name
+# Reverse lookup: response collection name -> api_name
 COLLECTION_API_MAP = {v: k for k, v in API_COLLECTION_MAP.items()}
 
-# All pan collections this app reads (derived from the map — do not duplicate elsewhere)
-PAN_RESPONSE_COLLECTIONS: List[str] = sorted(set(API_COLLECTION_MAP.values()))
+# All response collections this app reads (derived from the map — do not duplicate elsewhere)
+RESPONSE_COLLECTIONS: List[str] = sorted(set(API_COLLECTION_MAP.values()))
 
 
 def get_response_collection_for_api(api_name: str) -> Optional[str]:
     """
-    Return the `pan` response collection name for an application `api_name`.
+    Return the response collection name for an application `api_name`.
 
     Returns None if the api_name is not a known application API name (prevents
     arbitrary collection names from being passed by the client).

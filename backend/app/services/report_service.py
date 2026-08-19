@@ -131,14 +131,14 @@ class ReportService:
         return daily_report
 
     # ------------------------------------------------------------------
-    # Daily usage report (from pan, by access key)
+    # Daily usage report (from response DB, by access key)
     # ------------------------------------------------------------------
 
-    async def get_daily_usage_report_from_pan(self, pan_db, db, client_id=None,
+    async def get_daily_usage_report_from_response_db(self, response_db, db, client_id=None,
                                               time_filter="month", start_date=None,
                                               end_date=None):
         """
-        Daily usage report for one client, aggregated from the `pan` response
+        Daily usage report for one client, aggregated from the response
         collections by matching `access_key` (the client's real API key) +
         created_time string window, per calendar day and status bucket.
 
@@ -184,7 +184,7 @@ class ReportService:
                             "count": {"$sum": 1}}},
             ]
             try:
-                docs = await pan_db[coll].aggregate(pipeline).to_list(length=None)
+                docs = await response_db[coll].aggregate(pipeline).to_list(length=None)
             except Exception:
                 return
             sp, np = price.get(name, (0.0, 0.0))
@@ -223,13 +223,13 @@ class ReportService:
         return result
 
     # ------------------------------------------------------------------
-    # Monthly billing report (from pan, by access key)
+    # Monthly billing report (from response DB, by access key)
     # ------------------------------------------------------------------
 
-    async def get_monthly_billing_report_from_pan(self, pan_db, db, client_id=None,
+    async def get_monthly_billing_report_from_response_db(self, response_db, db, client_id=None,
                                                   month=None):
         """
-        Monthly consumption/billing report aggregated from the `pan` response
+        Monthly consumption/billing report aggregated from the response
         collections by the client's `access_key`, with API-wise counts, top
         APIs, peak usage date and derived cost from api_access pricing.
         """
@@ -289,7 +289,7 @@ class ReportService:
                 }},
             ]
             try:
-                docs = await pan_db[coll].aggregate(pipeline).to_list(length=None)
+                docs = await response_db[coll].aggregate(pipeline).to_list(length=None)
             except Exception:
                 return
             d = docs[0] if docs else {}

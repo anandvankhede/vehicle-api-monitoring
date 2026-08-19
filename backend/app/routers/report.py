@@ -17,7 +17,7 @@ from typing import Optional
 
 from bson import ObjectId
 
-from app.database import get_database, get_pan_database
+from app.database import get_database, get_response_database
 from bson import ObjectId
 
 from app.dependencies.auth import get_current_admin, get_current_user
@@ -46,11 +46,11 @@ async def get_client_usage_report(
     start_date: Optional[str] = Query(None),
     end_date: Optional[str] = Query(None),
     db=Depends(get_database),
-    pan_db=Depends(get_pan_database),
+    response_db=Depends(get_response_database),
     user=Depends(get_current_user),
 ):
     """
-    Return daily usage report data, aggregated from the `pan` response
+    Return daily usage report data, aggregated from the response
     collections, mapped by the client's API key (access_key), whenever a
     client is in scope. Falls back to `usage_reports` for unscoped admin
     queries.
@@ -64,8 +64,8 @@ async def get_client_usage_report(
     scoped = _resolve_client_scope(user, client_id)
 
     if scoped:
-        report = await report_service.get_daily_usage_report_from_pan(
-            pan_db, db, client_id=scoped, time_filter=date_range,
+        report = await report_service.get_daily_usage_report_from_response_db(
+            response_db, db, client_id=scoped, time_filter=date_range,
             start_date=start_date, end_date=end_date)
         return {"data": report}
 
@@ -94,11 +94,11 @@ async def get_billing_report(
     client_id: Optional[str] = Query(None),
     month: Optional[str] = Query(None, description="YYYY-MM format"),
     db=Depends(get_database),
-    pan_db=Depends(get_pan_database),
+    response_db=Depends(get_response_database),
     user=Depends(get_current_user),
 ):
     """
-    Return monthly consumption/billing report, aggregated from the `pan`
+    Return monthly consumption/billing report, aggregated from the response
     response collections by the client's API key when a client is in scope.
 
     Query params:
@@ -107,8 +107,8 @@ async def get_billing_report(
     """
     scoped = _resolve_client_scope(user, client_id)
     if scoped:
-        result = await report_service.get_monthly_billing_report_from_pan(
-            pan_db, db, client_id=scoped, month=month)
+        result = await report_service.get_monthly_billing_report_from_response_db(
+            response_db, db, client_id=scoped, month=month)
         return result
     result = await report_service.get_monthly_billing_report(
         db, client_id=None, month=month)

@@ -2,19 +2,19 @@
 Dashboard Analytics Service
 ============================
 
-Reads raw API responses from the `pan` (response) database and aggregates them
+Reads raw API responses from the response database and aggregates them
 for the admin dashboard. The dashboard NEVER receives raw documents — only
 aggregated counts/graph points.
 
 Flow for a selected client + API:
     username/client_id
         -> user_mapping (client_id, access_key, apis[])
-        -> api_name -> API_COLLECTION_MAP -> pan response collection
+        -> api_name -> API_COLLECTION_MAP -> response collection
         -> query { access_key, created_time range }
         -> read response.response_code (and fallbacks)
         -> aggregate
 
-Status classification (verified against live `pan` data):
+Status classification (verified against live response DB data):
     response.response_code 101 -> SUCCESS   (data found)
     response.response_code 103 -> NOT_FOUND (no data found)
     response.response_code 110 -> FAILED    (processing/upstream error)
@@ -47,7 +47,7 @@ from app.services.api_collections import (
 # Response status normalization
 # -----------------------------------------------------------------------------
 
-# Client access keys on the pan DB:
+# Client access keys on the response DB:
 #   101 -> SUCCESS | 103 -> NOT_FOUND | 110 -> FAILED
 _CODE_TO_STATUS = {101: "SUCCESS", 103: "NOT_FOUND", 110: "FAILED"}
 
@@ -169,7 +169,7 @@ def compute_created_time_range(
     matching the string `created_time` field: [start, end).
 
     Returns (start_str, end_str) in "YYYY-MM-DD HH:mm:ss" format using the
-    configured dashboard timezone (pan data is stored as naive local time).
+    configured dashboard timezone (response data is stored as naive local time).
     """
     now = now_dashboard()
 
@@ -209,7 +209,7 @@ def compute_created_time_range(
 
 
 # -----------------------------------------------------------------------------
-# Aggregation against the pan response collections
+# Aggregation against the response collections
 # -----------------------------------------------------------------------------
 
 def _status_map_from_groups(groups) -> Dict[str, int]:
@@ -232,7 +232,7 @@ def _projection() -> dict:
 
 
 async def get_usage_summary(
-    pan_db, access_key: str, assigned_apis: List[str],
+    response_db, access_key: str, assigned_apis: List[str],
     api_name: str = "all", time_filter: str = "last_7_days",
     start_date: Optional[str] = None, end_date: Optional[str] = None,
 ) -> Dict[str, Any]:
@@ -271,7 +271,7 @@ async def get_usage_summary(
                         "count": {"$sum": 1}}},
         ]
         try:
-            groups = await pan_db[coll].aggregate(pipeline).to_list(length=None)
+            groups = await response_db[coll].aggregate(pipeline).to_list(length=None)
         except Exception:
             return {}
         return _status_map_from_groups(groups)
@@ -293,7 +293,7 @@ async def get_usage_summary(
     }
 
 async def get_usage_by_date(
-    pan_db, access_key: str, assigned_apis: List[str],
+    response_db, access_key: str, assigned_apis: List[str],
     api_name: str = "all", time_filter: str = "last_7_days",
     start_date: Optional[str] = None, end_date: Optional[str] = None,
 ) -> List[dict]:
@@ -337,7 +337,7 @@ async def get_usage_by_date(
             }},
         ]
         try:
-            groups = await pan_db[coll].aggregate(pipeline).to_list(length=None)
+            groups = await response_db[coll].aggregate(pipeline).to_list(length=None)
         except Exception:
             return
         for g in groups:
@@ -385,11 +385,11 @@ def _previous_range(start_str: str, end_str: str):
 
 
 async def get_user_api_stats(
-    pan_db, db, client_id: str = "all", time_filter: str = "last_7_days",
+    response_db, db, client_id: str = "all", time_filter: str = "last_7_days",
     start_date: Optional[str] = None, end_date: Optional[str] = None,
 ) -> List[dict]:
     """
-    Per-API KPI grid for the selected scope, aggregated from the `pan`
+    Per-API KPI grid for the selected scope, aggregated from the response
     (response) collections — never from raw documents.
 
     Two branches (dynamic):
@@ -461,7 +461,7 @@ async def get_user_api_stats(
             pipeline.append({"$match": {"access_key": key_scope}})
         pipeline.append({"$facet": facet})
         try:
-            docs = await pan_db[coll].aggregate(pipeline).to_list(length=None)
+            docs = await response_db[coll].aggregate(pipeline).to_list(length=None)
         except Exception:
             return {"api_name": name, "current": {}, "previous": {}, "avg_time": []}
         d = docs[0] if docs else {}
@@ -716,11 +716,11 @@ def _trend_bucket_label(bucket: str, time_filter: str) -> str:
 
 
 async def get_api_usage_stats(
-    pan_db, db, api_id: str, time_filter: str = "last_7_days",
+    response_db, db, api_id: str, time_filter: str = "last_7_days",
     start_date: Optional[str] = None, end_date: Optional[str] = None,
 ) -> Dict[str, Any]:
     """
-    Global monitoring stats for a single API, aggregated from the `pan`
+    Global monitoring stats for a single API, aggregated from the response
     (response) collections — the same real-data source used by the KPI grid.
 
     The pie-chart distribution is computed from response.response_code buckets,
@@ -779,7 +779,7 @@ async def get_api_usage_stats(
         }},
     ]
     try:
-        docs = await pan_db[coll].aggregate(pipeline).to_list(length=None)
+        docs = await response_db[coll].aggregate(pipeline).to_list(length=None)
     except Exception:
         docs = []
     d = docs[0] if docs else {}
@@ -848,12 +848,12 @@ async def get_api_usage_stats(
 # -----------------------------------------------------------------------------
 
 async def get_client_details_stats(
-    pan_db, db, client_id: str = "all", time_filter: str = "last_7_days",
+    response_db, db, client_id: str = "all", time_filter: str = "last_7_days",
     start_date: Optional[str] = None, end_date: Optional[str] = None,
 ) -> Dict[str, Any]:
     """
     Detailed chart data: one per-API trend series (+ KPI totals) for the selected
-    scope, aggregated from the `pan` (response) collections.
+    scope, aggregated from the response collections.
 
     Two branches (mirrors get_user_api_stats):
         * ALL CLIENTS (client_id == "all"):
@@ -921,7 +921,7 @@ async def get_client_details_stats(
             }},
         ]
         try:
-            docs = await pan_db[coll].aggregate(pipeline).to_list(length=None)
+            docs = await response_db[coll].aggregate(pipeline).to_list(length=None)
         except Exception:
             return {"name": name, "buckets": [], "avg_time": []}
         d = docs[0] if docs else {}
@@ -1006,12 +1006,12 @@ _CLIENT_ANALYTICS_SORT_MAP = {
 
 
 async def get_client_analytics_stats(
-    pan_db, db, client_id: str = "all", api_id: str = "all",
+    response_db, db, client_id: str = "all", api_id: str = "all",
     time_filter: str = "today", status_filter: str = "all",
     search_query: str = "", sort_by: str = "totalHits", sort_order: str = "desc",
     start_date: Optional[str] = None, end_date: Optional[str] = None,
 ) -> Dict[str, Any]:
-    """Per (client, api) analytics rows aggregated from the `pan` response
+    """Per (client, api) analytics rows aggregated from the response
     collections, with client/API filtering, status filter, search and sort."""
     start_str, end_str = compute_created_time_range(
         time_filter, start_date, end_date)
@@ -1078,7 +1078,7 @@ async def get_client_analytics_stats(
                 }},
             ]
             try:
-                docs = await pan_db[coll].aggregate(pipeline).to_list(length=None)
+                docs = await response_db[coll].aggregate(pipeline).to_list(length=None)
             except Exception:
                 return {"name": name, "counts": {}, "avg": None}
             d = docs[0] if docs else {}
@@ -1254,7 +1254,7 @@ async def _resolve_api_name(db, api_id: Optional[str], api_name: Optional[str]) 
 
 
 async def export_client_analytics_detail(
-    pan_db,
+    response_db,
     db,
     client_id: str,
     api_id: Optional[str] = None,
@@ -1265,7 +1265,7 @@ async def export_client_analytics_detail(
     end_date: Optional[str] = None,
 ) -> Dict[str, Any]:
     """
-    Export raw pan transaction rows for one client + API as CSV (base64).
+    Export raw response DB transaction rows for one client + API as CSV (base64).
 
     Uses indexed {access_key, created_time} range scans with a tight projection
     so only export columns are read from MongoDB.
@@ -1319,11 +1319,11 @@ async def export_client_analytics_detail(
     request_field = API_REQUEST_FIELD_MAP.get(resolved_api, "request")
     header_request = f"request.{request_field}"
 
-    total = await pan_db[coll].count_documents(match)
+    total = await response_db[coll].count_documents(match)
     truncated = total > MAX_ANALYTICS_EXPORT_ROWS
 
     cursor = (
-        pan_db[coll]
+        response_db[coll]
         .find(match, projection)
         .sort("created_time", 1)
         .limit(MAX_ANALYTICS_EXPORT_ROWS)

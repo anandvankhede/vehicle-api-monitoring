@@ -2,7 +2,7 @@
 Dashboard Analytics Router
 ===========================
 
-Admin dashboard endpoints that read aggregate usage directly from the `pan`
+Admin dashboard endpoints that read aggregate usage directly from the response
 (API-response) database. The frontend sends only a client identifier (client_id
 or username), an application `api_name`, and a date filter — the backend resolves
 the access key and maps the API to its response collection.
@@ -17,7 +17,7 @@ Endpoints:
 from fastapi import APIRouter, Depends, HTTPException, Query
 from typing import Optional
 
-from app.database import get_database, get_pan_database
+from app.database import get_database, get_response_database
 from app.dependencies.auth import get_current_admin
 from app.schemas.common import ErrorResponse
 from app.services import analytics_service as analytics
@@ -63,7 +63,7 @@ async def get_summary(
     start_date: Optional[str] = Query(None, description="YYYY-MM-DD"),
     end_date: Optional[str] = Query(None, description="YYYY-MM-DD"),
     db=Depends(get_database),
-    pan_db=Depends(get_pan_database),
+    response_db=Depends(get_response_database),
     _=Depends(get_current_admin),
 ):
     """Dashboard summary: total_hits, success, not_found, failed, other."""
@@ -73,7 +73,7 @@ async def get_summary(
         mapping, api_name = await _resolve_scope(db, client_id, api_name)
         if mapping:
             return await analytics.get_usage_summary(
-                pan_db, mapping["access_key"], mapping.get("apis", []),
+                response_db, mapping["access_key"], mapping.get("apis", []),
                 api_name, time_filter, start_date, end_date)
 
         # Aggregate across all active clients
@@ -83,7 +83,7 @@ async def get_summary(
             if not u.get("access_key"):
                 continue
             r = await analytics.get_usage_summary(
-                pan_db, u["access_key"], u.get("apis", []),
+                response_db, u["access_key"], u.get("apis", []),
                 api_name, time_filter, start_date, end_date)
             totals["success"] += r["success"]
             totals["not_found"] += r["not_found"]
@@ -106,7 +106,7 @@ async def get_graph(
     start_date: Optional[str] = Query(None, description="YYYY-MM-DD"),
     end_date: Optional[str] = Query(None, description="YYYY-MM-DD"),
     db=Depends(get_database),
-    pan_db=Depends(get_pan_database),
+    response_db=Depends(get_response_database),
     _=Depends(get_current_admin),
 ):
     """Daily graph: per-date success/not_found/failed/total."""
@@ -116,7 +116,7 @@ async def get_graph(
         mapping, api_name = await _resolve_scope(db, client_id, api_name)
         if mapping:
             return await analytics.get_usage_by_date(
-                pan_db, mapping["access_key"], mapping.get("apis", []),
+                response_db, mapping["access_key"], mapping.get("apis", []),
                 api_name, time_filter, start_date, end_date)
 
         # Aggregate across all clients by date
@@ -126,7 +126,7 @@ async def get_graph(
             if not u.get("access_key"):
                 continue
             days = await analytics.get_usage_by_date(
-                pan_db, u["access_key"], u.get("apis", []),
+                response_db, u["access_key"], u.get("apis", []),
                 api_name, time_filter, start_date, end_date)
             for row in days:
                 rec = merged.setdefault(row["date"], {"success": 0, "not_found": 0,

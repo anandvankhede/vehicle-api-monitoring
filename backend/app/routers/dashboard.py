@@ -15,7 +15,7 @@ Endpoints:
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from typing import Optional
 
-from app.database import get_database, get_pan_database
+from app.database import get_database, get_response_database
 from app.dependencies.auth import get_current_admin
 from app.schemas.common import ErrorResponse
 from app.services.dashboard_service import DashboardService
@@ -130,12 +130,12 @@ async def get_user_api_stats(
     start_date: Optional[str] = Query(None),
     end_date: Optional[str] = Query(None),
     db=Depends(get_database),
-    pan_db=Depends(get_pan_database),
+    response_db=Depends(get_response_database),
     _=Depends(get_current_admin),
 ):
     """
     Return per-API KPI grid stats for the selected client and time filter,
-    aggregated directly from the `pan` (response) database via user_mapping.
+    aggregated directly from the response database via user_mapping.
 
     For the selected user(s), the backend reads user_mapping -> access_key +
     apis[], maps each api to its response collection, and sums the request
@@ -151,7 +151,7 @@ async def get_user_api_stats(
         time_filter = "today"
     try:
         return await analytics.get_user_api_stats(
-            pan_db, db, client_id, time_filter, start_date, end_date)
+            response_db, db, client_id, time_filter, start_date, end_date)
     except HTTPException:
         raise
     except Exception as e:
@@ -168,19 +168,19 @@ async def get_api_usage(
     start_date: Optional[str] = Query(None),
     end_date: Optional[str] = Query(None),
     db=Depends(get_database),
-    pan_db=Depends(get_pan_database),
+    response_db=Depends(get_response_database),
     _=Depends(get_current_admin),
 ):
     """
     Return detailed monitoring stats for a single API, aggregated from the
-    `pan` (response) collections:
+    response collections:
         - distribution: Pie chart segments (Success / Failed / Not Found)
         - trendData: Line chart points bucketed to the selected time filter
         - totalHits, successRate, avgLatencyMs, uptimePercentage
     """
     try:
         return await analytics.get_api_usage_stats(
-            pan_db, db, api_id, time_filter, start_date, end_date)
+            response_db, db, api_id, time_filter, start_date, end_date)
     except ValueError as e:
         raise HTTPException(status_code=404, detail=str(e))
     except HTTPException:
@@ -221,11 +221,11 @@ async def get_client_analytics(
         start_date: Optional[str] = Query(None),
     end_date: Optional[str] = Query(None),
     db=Depends(get_database),
-    pan_db=Depends(get_pan_database),
+    response_db=Depends(get_response_database),
     _=Depends(get_current_admin),
 ):
     """
-    Return filtered, sorted client analytics data, aggregated from the `pan`
+    Return filtered, sorted client analytics data, aggregated from the response
     (response) collections via each client's access key.
 
     Query params:
@@ -241,7 +241,7 @@ async def get_client_analytics(
     """
     try:
         result = await analytics.get_client_analytics_stats(
-            pan_db, db,
+            response_db, db,
             client_id=client_id,
             api_id=api_id,
             time_filter=time_filter,
@@ -308,7 +308,7 @@ async def export_client_analytics_detail(
     start_date: Optional[str] = Query(None),
     end_date: Optional[str] = Query(None),
     db=Depends(get_database),
-    pan_db=Depends(get_pan_database),
+    response_db=Depends(get_response_database),
     _=Depends(get_current_admin),
 ):
     """
@@ -318,7 +318,7 @@ async def export_client_analytics_detail(
     """
     try:
         return await analytics.export_client_analytics_detail(
-            pan_db,
+            response_db,
             db,
             client_id=client_id,
             api_id=api_id,
@@ -346,11 +346,11 @@ async def get_client_details(
     start_date: Optional[str] = Query(None),
     end_date: Optional[str] = Query(None),
     db=Depends(get_database),
-    pan_db=Depends(get_pan_database),
+    response_db=Depends(get_response_database),
     _=Depends(get_current_admin),
 ):
     """
-    Return per-client API detail trend data, aggregated from the `pan`
+    Return per-client API detail trend data, aggregated from the response
     (response) collections.
 
     Query params:
@@ -359,7 +359,7 @@ async def get_client_details(
     """
     try:
         return await analytics.get_client_details_stats(
-            pan_db, db, client_id, time_filter, start_date, end_date)
+            response_db, db, client_id, time_filter, start_date, end_date)
     except ValueError as e:
         raise HTTPException(status_code=404, detail=str(e))
     except HTTPException:
