@@ -12,7 +12,8 @@ When a new API is added on the response DB side (e.g. 7 → 9 collections):
        or seed script — same `name` as the key above.
     3. Ensure the collection already exists on the remote response database
        (this app never creates response collections).
-    4. Restart the backend — startup verifies all mapped collections exist.
+    4. Restart the backend — startup verifies the response DB is reachable and
+       at least one mapped collection exists (missing entries are skipped).
 
 The frontend must send `api_name` (application name), never a raw MongoDB
 collection name. Backend validates against this map and refuses anything else.

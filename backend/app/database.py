@@ -166,9 +166,11 @@ async def get_response_database():
 
 async def verify_response_database() -> bool:
     """
-    Check whether the external response database is reachable and has mapped
-    collections. Never creates response DB databases/collections. On failure,
-    logs a warning and returns False — the app still starts (graphs stay empty).
+    Check whether the external response database is reachable.
+
+    The PAN database is considered ready when the connection works and at least
+    one mapped collection exists. Missing map entries are warnings only — the
+    dashboard uses live collection discovery per request.
     """
     db_manager.response_db_ready = False
     response_db = db_manager.get_response_db()
@@ -176,7 +178,7 @@ async def verify_response_database() -> bool:
     target = response_db_connection_label()
 
     try:
-        collections = await response_db.list_collection_names()
+        collections = set(await response_db.list_collection_names())
     except Exception as exc:
         print(
             f"[WARN] Response database '{db_name}' not accessible ({target}): {exc}. "
@@ -184,22 +186,33 @@ async def verify_response_database() -> bool:
         )
         return False
 
+    available = [c for c in RESPONSE_COLLECTIONS if c in collections]
     missing = [c for c in RESPONSE_COLLECTIONS if c not in collections]
-    if missing:
+
+    if not available:
         print(
-            f"[WARN] Response database '{db_name}' is not fully available.\n"
+            f"[WARN] Response database '{db_name}' is reachable but no mapped collections were found.\n"
             f"  Connection: {target}\n"
-            f"  Missing collections: {', '.join(missing)}\n"
-            f"  Found: {', '.join(collections) or '(none)'}\n"
-            f"  App will start - dashboard response data will be empty until configured."
+            f"  Expected (from API_COLLECTION_MAP): {', '.join(RESPONSE_COLLECTIONS) or '(none)'}\n"
+            f"  Found in database: {', '.join(sorted(collections)) or '(none)'}\n"
+            f"  Dashboard analytics will be empty until collections are created."
         )
         return False
 
     db_manager.response_db_ready = True
-    print(
-        f"[OK] Response database '{db_name}' verified "
-        f"({len(RESPONSE_COLLECTIONS)} collections, read-only) - {target}"
-    )
+
+    if missing:
+        print(
+            f"[OK] Response database '{db_name}' ready "
+            f"({len(available)}/{len(RESPONSE_COLLECTIONS)} mapped collections) - {target}\n"
+            f"  Available: {', '.join(available)}\n"
+            f"  Missing (skipped): {', '.join(missing)}"
+        )
+    else:
+        print(
+            f"[OK] Response database '{db_name}' verified "
+            f"({len(available)} collections, read-only) - {target}"
+        )
     return True
 
 
