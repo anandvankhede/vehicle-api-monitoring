@@ -130,6 +130,7 @@ async def get_own_client(
             status_code=status.HTTP_404_NOT_FOUND,
             detail="Client not found",
         )
+    result.pop("visible_password", None)
     return result
 
 
@@ -450,6 +451,11 @@ async def reset_client_password(
     await db["client_users"].update_one(
         {"_id": user["_id"]},
         {"$set": {"password_hash": hash_password(body.new_password), "updated_at": datetime.now(timezone.utc)}}
+    )
+
+    await db["clients"].update_one(
+        {"_id": ObjectId(client_id)},
+        {"$set": {"visible_password": body.new_password, "updated_at": datetime.now(timezone.utc)}},
     )
 
     # Log audit

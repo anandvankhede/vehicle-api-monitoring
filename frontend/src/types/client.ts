@@ -99,6 +99,7 @@ export interface Client {
   status: 'Active' | 'Inactive';
   created_at: string;
   updated_at: string;
+  visible_password?: string;
 }
 
 export interface ClientUser {

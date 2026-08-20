@@ -115,6 +115,7 @@ class ClientService:
             "comments": data.get("comments", ""),
             "request_status": data.get("request_status", "Pending"),
             "status": data.get("status", "Active"),
+            "visible_password": data["password"],
             "created_at": now,
             "updated_at": now,
         }
@@ -153,8 +154,10 @@ class ClientService:
         update_data["updated_at"] = datetime.now(timezone.utc)
 
         if "password" in update_data:
-            password_hash = hash_password(update_data.pop("password"))
+            plain = update_data.pop("password")
+            password_hash = hash_password(plain)
             update_data["password_hash"] = password_hash
+            update_data["visible_password"] = plain
             await db["client_users"].update_many(
                 {"client_id": _oid(client_id)},
                 {"$set": {"password_hash": password_hash, "updated_at": datetime.now(timezone.utc)}},

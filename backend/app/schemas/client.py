@@ -109,6 +109,7 @@ class ClientRead(BaseModel):
     status: str
     created_at: datetime
     updated_at: datetime
+    visible_password: Optional[str] = None
 
     class Config:
         from_attributes = True  # allows reading from ORM-like dicts
@@ -244,6 +245,7 @@ class ApiAccessUpdate(BaseModel):
     currency: Optional[Currency] = None
     request_limit: Optional[int] = Field(None, ge=1)
     limit_frequency: Optional[RequestLimitFrequency] = None
+    current_usage: Optional[int] = Field(None, ge=0)
     status: Optional[str] = None
     expiry_date: Optional[str] = None
     api_key: Optional[str] = None

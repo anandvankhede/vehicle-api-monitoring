@@ -274,7 +274,7 @@ const clientService = {
 
   updateApiAccess(
     accessId: string,
-    updates: Partial<Pick<ClientApiAccess, 'api_key' | 'request_limit' | 'limit_frequency' | 'status' | 'expiry_date' | 'price_per_hit' | 'currency' | 'success_price_per_hit' | 'not_found_price_per_hit'>>,
+    updates: Partial<Pick<ClientApiAccess, 'api_key' | 'request_limit' | 'limit_frequency' | 'current_usage' | 'status' | 'expiry_date' | 'price_per_hit' | 'currency' | 'success_price_per_hit' | 'not_found_price_per_hit'>>,
     _adminUsername: string = 'admin'
   ): boolean {
     api.updateApiAccess(accessId, updates).then(

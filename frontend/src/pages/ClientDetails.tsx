@@ -89,6 +89,8 @@ const OverviewCards: React.FC<{ client: Client; refreshKey?: number }> = ({ clie
 };
 
 const GeneralTab: React.FC<{ client: Client }> = ({ client }) => {
+  const [showPassword, setShowPassword] = useState(false);
+
   return (
     <div className="theme-card p-5">
       <div className="grid grid-cols-1 md:grid-cols-2 gap-x-6 gap-y-4">
@@ -99,6 +101,27 @@ const GeneralTab: React.FC<{ client: Client }> = ({ client }) => {
         <div>
           <span className="text-[10px] font-bold uppercase tracking-wider" style={{ color: 'var(--text-muted)' }}>Username</span>
           <p className="text-sm font-semibold mt-0.5" style={{ color: 'var(--text-primary)' }}>@{client.username}</p>
+        </div>
+        <div>
+          <span className="text-[10px] font-bold uppercase tracking-wider" style={{ color: 'var(--text-muted)' }}>Password</span>
+          <div className="flex items-center gap-2 mt-0.5">
+            <p className="text-sm font-mono" style={{ color: 'var(--text-primary)' }}>
+              {client.visible_password
+                ? (showPassword ? client.visible_password : '••••••••')
+                : 'Not stored — reset password to save'}
+            </p>
+            {client.visible_password && (
+              <button
+                type="button"
+                onClick={() => setShowPassword((v) => !v)}
+                className="p-1 rounded"
+                style={{ color: 'var(--primary)' }}
+                title={showPassword ? 'Hide password' : 'Show password'}
+              >
+                {showPassword ? <EyeOff className="w-3.5 h-3.5" /> : <Eye className="w-3.5 h-3.5" />}
+              </button>
+            )}
+          </div>
         </div>
         <div className="md:col-span-2">
           <span className="text-[10px] font-bold uppercase tracking-wider" style={{ color: 'var(--text-muted)' }}>Address</span>
@@ -213,20 +236,26 @@ const ApiManagementTab: React.FC<{ client: Client; setToast: (t: string) => void
 
   const handleDrawerSave = async () => {
     if (!managedAccess) return;
-    clientService.updateApiAccess(managedAccess.id, {
-      price_per_hit: managedAccess.success_price_per_hit,
-      success_price_per_hit: managedAccess.success_price_per_hit,
-      not_found_price_per_hit: managedAccess.not_found_price_per_hit,
-      currency: managedAccess.currency,
-      request_limit: managedAccess.request_limit,
-      limit_frequency: managedAccess.limit_frequency,
-      status: managedAccess.status,
-      expiry_date: managedAccess.expiry_date,
-    });
-    setShowManageDrawer(false);
-    setManagedAccess(null);
-    await loadAccess();
-    setToast('Subscription updated successfully.');
+    try {
+      await api.updateApiAccess(managedAccess.id, {
+        price_per_hit: managedAccess.success_price_per_hit,
+        success_price_per_hit: managedAccess.success_price_per_hit,
+        not_found_price_per_hit: managedAccess.not_found_price_per_hit,
+        currency: managedAccess.currency,
+        request_limit: managedAccess.request_limit,
+        limit_frequency: managedAccess.limit_frequency,
+        current_usage: managedAccess.current_usage,
+        status: managedAccess.status,
+        expiry_date: managedAccess.expiry_date,
+      });
+      setShowManageDrawer(false);
+      setManagedAccess(null);
+      await loadAccess();
+      onDataChange?.();
+      setToast('Subscription updated successfully.');
+    } catch {
+      setToast('Failed to update subscription.');
+    }
   };
 
   const handleRegenerateKey = async () => {
@@ -566,11 +595,15 @@ const ApiManagementTab: React.FC<{ client: Client; setToast: (t: string) => void
               <div>
                 <label className="text-xs font-medium" style={{ color: 'var(--text-secondary)' }}>Current Usage</label>
                 <input
-                  type="text"
-                  value={`${managedAccess.current_usage.toLocaleString()} / ${managedAccess.request_limit.toLocaleString()} ${managedAccess.limit_frequency.replace('Per ', '/')}`}
-                  disabled
-                  className="theme-input w-full px-3 py-1.5 rounded text-sm mt-1 focus:outline-none opacity-60"
+                  type="number"
+                  min={0}
+                  value={managedAccess.current_usage}
+                  onChange={(e) => setManagedAccess({ ...managedAccess, current_usage: Number(e.target.value) })}
+                  className="theme-input w-full px-3 py-1.5 rounded text-sm mt-1 focus:outline-none"
                 />
+                <p className="text-[10px] mt-1" style={{ color: 'var(--text-muted)' }}>
+                  {managedAccess.current_usage.toLocaleString()} / {managedAccess.request_limit.toLocaleString()} ({managedAccess.request_limit > 0 ? Math.round((managedAccess.current_usage / managedAccess.request_limit) * 100) : 0}%)
+                </p>
               </div>
             </div>
 
@@ -711,10 +744,17 @@ const ActivityTab: React.FC<{ client: Client }> = ({ client }) => {
   );
 };
 
-const SettingsTab: React.FC<{ client: Client; setToast: (t: string) => void; navigate: (path: string) => void }> = ({ client, setToast, navigate }) => {
+const SettingsTab: React.FC<{
+  client: Client;
+  setToast: (t: string) => void;
+  navigate: (path: string) => void;
+  onClientUpdate?: (client: Client) => void;
+}> = ({ client, setToast, navigate, onClientUpdate }) => {
   const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
   const [showResetPassword, setShowResetPassword] = useState(false);
   const [newPassword, setNewPassword] = useState('');
+  const [showStoredPassword, setShowStoredPassword] = useState(false);
+  const [showNewPassword, setShowNewPassword] = useState(false);
 
   const handleToggleStatus = () => {
     const newStatus = client.status === 'Active' ? 'Inactive' : 'Active';
@@ -730,12 +770,19 @@ const SettingsTab: React.FC<{ client: Client; setToast: (t: string) => void; nav
     setTimeout(() => navigate('/client-management/clients'), 500);
   };
 
-  const handleResetPassword = () => {
+  const handleResetPassword = async () => {
     if (!newPassword.trim()) return;
-    clientService.resetClientPassword(client.id, newPassword);
-    setShowResetPassword(false);
-    setNewPassword('');
-    setToast('Password reset successfully.');
+    const success = await clientService.resetClientPassword(client.id, newPassword);
+    if (success) {
+      const updated = await clientService.getClientByIdAsync(client.id);
+      if (updated) onClientUpdate?.(updated);
+      setShowResetPassword(false);
+      setNewPassword('');
+      setShowNewPassword(false);
+      setToast('Password reset successfully.');
+    } else {
+      setToast('Failed to reset password.');
+    }
   };
 
   return (
@@ -759,6 +806,29 @@ const SettingsTab: React.FC<{ client: Client; setToast: (t: string) => void; nav
           {client.status === 'Active' ? <Pause className="w-3.5 h-3.5" /> : <Play className="w-3.5 h-3.5" />}
           {client.status === 'Active' ? 'Deactivate' : 'Activate'}
         </button>
+      </div>
+
+      {/* Client Password */}
+      <div className="theme-card p-5">
+        <h4 className="text-sm font-bold" style={{ color: 'var(--text-primary)' }}>Client Password</h4>
+        <p className="text-xs mt-0.5 mb-3" style={{ color: 'var(--text-secondary)' }}>View the stored login password for this client</p>
+        <div className="flex items-center gap-2">
+          <p className="text-sm font-mono" style={{ color: 'var(--text-primary)' }}>
+            {client.visible_password
+              ? (showStoredPassword ? client.visible_password : '••••••••')
+              : 'Not stored — use Reset Password below'}
+          </p>
+          {client.visible_password && (
+            <button
+              type="button"
+              onClick={() => setShowStoredPassword((v) => !v)}
+              className="p-1 rounded"
+              style={{ color: 'var(--primary)' }}
+            >
+              {showStoredPassword ? <EyeOff className="w-3.5 h-3.5" /> : <Eye className="w-3.5 h-3.5" />}
+            </button>
+          )}
+        </div>
       </div>
 
       {/* Reset Password */}
@@ -839,13 +909,24 @@ const SettingsTab: React.FC<{ client: Client; setToast: (t: string) => void; nav
             </div>
             <div>
               <label className="text-sm font-medium" style={{ color: 'var(--text-secondary)' }}>New Password</label>
-              <input
-                type="text"
-                value={newPassword}
-                onChange={(e) => setNewPassword(e.target.value)}
-                placeholder="Enter new password..."
-                className="theme-input w-full px-3 py-2.5 rounded text-sm mt-1 focus:outline-none"
-              />
+              <div className="relative mt-1">
+                <input
+                  type={showNewPassword ? 'text' : 'password'}
+                  value={newPassword}
+                  onChange={(e) => setNewPassword(e.target.value)}
+                  placeholder="Enter new password..."
+                  className="theme-input w-full px-3 py-2.5 pr-10 rounded text-sm focus:outline-none"
+                  minLength={8}
+                />
+                <button
+                  type="button"
+                  onClick={() => setShowNewPassword((v) => !v)}
+                  className="absolute right-2 top-1/2 -translate-y-1/2 p-1 rounded"
+                  style={{ color: 'var(--text-muted)' }}
+                >
+                  {showNewPassword ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
+                </button>
+              </div>
             </div>
             <div className="flex gap-3 mt-6">
               <button onClick={() => setShowResetPassword(false)} className="flex-1 px-4 py-2.5 rounded text-sm font-semibold" style={{ backgroundColor: 'var(--card-inner)', color: 'var(--text-secondary)' }}>Cancel</button>
@@ -1048,7 +1129,14 @@ export const ClientDetails: React.FC = () => {
       )}
       {activeTab === 'Usage' && <UsageTab client={client} />}
       {activeTab === 'Activity' && <ActivityTab client={client} />}
-      {activeTab === 'Settings' && <SettingsTab client={client} setToast={setToast} navigate={navigate} />}
+      {activeTab === 'Settings' && (
+        <SettingsTab
+          client={client}
+          setToast={setToast}
+          navigate={navigate}
+          onClientUpdate={setClient}
+        />
+      )}
     </div>
   );
 };

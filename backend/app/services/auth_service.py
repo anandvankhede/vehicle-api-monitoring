@@ -239,6 +239,7 @@ class AuthService:
             "pan": data["pan"].upper().strip(),
             "email": data["email"].strip(),
             "phone": data["phone"].strip(),
+            "visible_password": data["password"],
             "selected_apis": [],
             "comments": "",
             "request_status": "Approved",

@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import {
   Search, Users, ToggleLeft, ToggleRight,
-  Eye, Trash2, Building2, Key, Save, ArrowLeft,
+  Eye, EyeOff, Trash2, Building2, Key, Save, ArrowLeft,
   CheckCircle, XCircle, Clock, AlertTriangle, X, Activity
 } from 'lucide-react';
 import { Navigate } from 'react-router-dom';
@@ -39,6 +39,8 @@ export const ClientManagementClients: React.FC = () => {
   const [assignLimit, setAssignLimit] = useState(10000);
   const [assignFrequency, setAssignFrequency] = useState<RequestLimitFrequency>('Per Month');
   const [showKey, setShowKey] = useState<Record<string, boolean>>({});
+  const [showClientPassword, setShowClientPassword] = useState(false);
+  const [showNewPassword, setShowNewPassword] = useState(false);
   const [availableApis, setAvailableApis] = useState<ApiInfo[]>([]);
   const [togglingClientId, setTogglingClientId] = useState<string | null>(null);
 
@@ -143,9 +145,12 @@ export const ClientManagementClients: React.FC = () => {
     }
     const success = await clientService.resetClientPassword(selectedClient.id, newPassword);
     if (success) {
+      const updated = await clientService.getClientByIdAsync(selectedClient.id);
+      if (updated) setSelectedClient(updated);
       setToast('Password changed successfully');
       setShowPasswordDialog(false);
       setNewPassword('');
+      setShowNewPassword(false);
     } else {
       setToast('Failed to change password');
     }
@@ -167,11 +172,22 @@ export const ClientManagementClients: React.FC = () => {
     }
   };
 
-  const handleUpdateApiAccess = (access: ClientApiAccess, updates: Partial<Pick<ClientApiAccess, 'request_limit' | 'limit_frequency' | 'status'>>) => {
-    clientService.updateApiAccess(access.id, updates);
-    if (selectedClient) loadClientApis(selectedClient.id);
-    setToast('API configuration saved.');
+  const handleUpdateApiAccess = async (
+    access: ClientApiAccess,
+    updates: Partial<Pick<ClientApiAccess, 'request_limit' | 'limit_frequency' | 'current_usage' | 'status'>>,
+  ) => {
+    try {
+      await api.updateApiAccess(access.id, updates);
+      setClientApis((prev) =>
+        prev.map((a) => (a.id === access.id ? { ...a, ...updates } : a))
+      );
+      setToast('API configuration saved.');
+    } catch {
+      setToast('Failed to save API configuration.');
+    }
   };
+
+  const frequencyOptions: RequestLimitFrequency[] = ['Per Minute', 'Per Hour', 'Per Day', 'Per Month', 'Per Year'];
 
   const filteredClients = clients.filter((client) => {
     if (statusFilter !== 'All' && client.status !== statusFilter) return false;
@@ -409,8 +425,24 @@ export const ClientManagementClients: React.FC = () => {
                   <div>
                     <p className="text-xs font-medium" style={{ color: 'var(--text-muted)' }}>Password</p>
                     <div className="flex items-center gap-2">
-                      <p className="text-sm font-mono" style={{ color: 'var(--text-primary)' }}>••••••••</p>
+                      <p className="text-sm font-mono" style={{ color: 'var(--text-primary)' }}>
+                        {selectedClient.visible_password
+                          ? (showClientPassword ? selectedClient.visible_password : '••••••••')
+                          : 'Not available — use Change to set'}
+                      </p>
+                      {selectedClient.visible_password && (
+                        <button
+                          type="button"
+                          onClick={() => setShowClientPassword((v) => !v)}
+                          className="p-1 rounded"
+                          style={{ color: 'var(--primary)' }}
+                          title={showClientPassword ? 'Hide password' : 'Show password'}
+                        >
+                          {showClientPassword ? <EyeOff className="w-3.5 h-3.5" /> : <Eye className="w-3.5 h-3.5" />}
+                        </button>
+                      )}
                       <button
+                        type="button"
                         onClick={() => setShowPasswordDialog(true)}
                         className="text-xs font-medium px-2 py-1 rounded"
                         style={{ color: 'var(--primary)', backgroundColor: 'var(--primary-light)' }}
@@ -557,7 +589,26 @@ export const ClientManagementClients: React.FC = () => {
                         </div>
                         <div className="flex items-center justify-between text-xs">
                           <span style={{ color: 'var(--text-muted)' }}>Frequency</span>
-                          <span className="font-medium" style={{ color: 'var(--text-secondary)' }}>{access.limit_frequency}</span>
+                          <select
+                            value={access.limit_frequency}
+                            onChange={(e) => handleUpdateApiAccess(access, { limit_frequency: e.target.value as RequestLimitFrequency })}
+                            className="theme-input px-2 py-1 rounded text-xs focus:outline-none"
+                          >
+                            {frequencyOptions.map((f) => (
+                              <option key={f} value={f}>{f}</option>
+                            ))}
+                          </select>
+                        </div>
+
+                        <div className="flex items-center justify-between text-xs">
+                          <span style={{ color: 'var(--text-muted)' }}>Current Usage</span>
+                          <input
+                            type="number"
+                            value={access.current_usage}
+                            onChange={(e) => handleUpdateApiAccess(access, { current_usage: Number(e.target.value) })}
+                            className="theme-input px-2 py-1 rounded text-xs focus:outline-none w-24 text-right"
+                            min={0}
+                          />
                         </div>
 
                         <div>
@@ -770,14 +821,24 @@ export const ClientManagementClients: React.FC = () => {
             <div className="space-y-4">
               <div>
                 <label className="text-sm font-medium" style={{ color: 'var(--text-secondary)' }}>New Password</label>
-                <input
-                  type="password"
-                  value={newPassword}
-                  onChange={(e) => setNewPassword(e.target.value)}
-                  className="theme-input w-full px-3 py-2.5 rounded-lg text-sm focus:outline-none mt-1"
-                  placeholder="Enter new password (min 8 characters)"
-                  minLength={8}
-                />
+                <div className="relative mt-1">
+                  <input
+                    type={showNewPassword ? 'text' : 'password'}
+                    value={newPassword}
+                    onChange={(e) => setNewPassword(e.target.value)}
+                    className="theme-input w-full px-3 py-2.5 pr-10 rounded-lg text-sm focus:outline-none"
+                    placeholder="Enter new password (min 8 characters)"
+                    minLength={8}
+                  />
+                  <button
+                    type="button"
+                    onClick={() => setShowNewPassword((v) => !v)}
+                    className="absolute right-2 top-1/2 -translate-y-1/2 p-1 rounded"
+                    style={{ color: 'var(--text-muted)' }}
+                  >
+                    {showNewPassword ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
+                  </button>
+                </div>
                 <p className="text-[10px] mt-1" style={{ color: 'var(--text-muted)' }}>Password must be at least 8 characters long</p>
               </div>
             </div>
