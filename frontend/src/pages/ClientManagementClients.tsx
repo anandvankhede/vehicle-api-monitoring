@@ -47,7 +47,7 @@ export const ClientManagementClients: React.FC = () => {
   const loadApis = async () => {
     try {
       const result = await api.getApiInfo();
-      setAvailableApis(result.data as ApiInfo[]);
+      setAvailableApis((result.data as ApiInfo[]).filter((item) => item.is_active !== false));
     } catch (error) {
       console.error('Failed to load APIs:', error);
       setAvailableApis([]);

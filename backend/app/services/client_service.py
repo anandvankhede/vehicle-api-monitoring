@@ -502,10 +502,18 @@ class ClientService:
 
     async def create_api_request(self, db, data: dict):
         """Create a new API access request (client asks for an API)."""
+        from app.services.api_collections import is_registered_api_name
+
+        api_name = (data.get("api_name") or "").strip().lower()
+        if not await is_registered_api_name(db, api_name):
+            raise ValueError(
+                f"API '{api_name}' is not available. Choose an API from the catalog."
+            )
+
         now = datetime.now(timezone.utc)
         doc = {
             "client_id": _oid(data["client_id"]),
-            "api_name": data["api_name"],
+            "api_name": api_name,
             "status": "Pending Approval",
             "requested_at": now,
             "reviewed_at": None,
@@ -517,11 +525,11 @@ class ClientService:
         await db["activity_records"].insert_one({
             "client_id": _oid(data["client_id"]),
             "type": "API Request",
-            "title": data["api_name"],
+            "title": api_name,
             "status": "Pending Approval",
-            "message": f"You requested access to {data['api_name']}.",
+            "message": f"You requested access to {api_name}.",
             "date": now,
-            "api_name": data["api_name"],
+            "api_name": api_name,
         })
         return _serialize(doc) | {"id": str(result.inserted_id)}
 

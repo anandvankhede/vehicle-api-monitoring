@@ -113,7 +113,7 @@ async def get_dashboard_users(
     responses={401: {"model": ErrorResponse}},
 )
 async def get_dashboard_apis(
-    client_id: str = Query("all", description="Client ID; 'all' for all PAN APIs"),
+    client_id: str = Query("all", description="Client ID; 'all' for all catalog APIs"),
     db=Depends(get_database),
     response_db=Depends(get_response_database),
     _=Depends(get_current_admin),
@@ -121,8 +121,8 @@ async def get_dashboard_apis(
     """
     Return APIs for the monitoring dropdown.
 
-    - all: every API whose PAN collection currently exists
-    - client: assigned APIs whose PAN collections currently exist
+    - all: every active catalog API
+    - client: assigned catalog APIs for that client
     """
     return await dashboard_service.get_api_options(
         db, client_id=client_id, response_db=response_db,
@@ -173,7 +173,7 @@ async def get_user_api_stats(
 )
 async def get_api_usage(
     api_id: str = Query(..., description="API ID to monitor"),
-    client_id: str = Query("all", description="Client ID; 'all' for global PAN stats"),
+    client_id: str = Query("all", description="Client ID; 'all' for global response_db stats"),
     time_filter: str = Query("last_7_days", description="last_30_min | last_1_hour | last_2_hours | last_3_hours | last_4_hours | last_5_hours | today | yesterday | last_7_days | last_month | custom"),
     start_date: Optional[str] = Query(None),
     end_date: Optional[str] = Query(None),

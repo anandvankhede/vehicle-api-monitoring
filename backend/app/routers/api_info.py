@@ -3,7 +3,7 @@ API Info Router
 ===============
 
 Endpoints:
-    - GET /api-info     — List all available APIs from the catalog
+    - GET /api-info     — List all APIs from the catalog
     - GET /api-info/{id} — Get a single API from the catalog
 """
 
@@ -18,9 +18,8 @@ from app.schemas.client import ApiInfoRead, ApiInfoDetailRead
 from app.schemas.common import ErrorResponse, BaseResponse
 from app.services.client_service import ClientService
 from app.services.api_collections import (
-    get_live_pan_api_names,
+    get_live_response_api_names,
     is_catalog_api_name,
-    is_registered_api_name,
 )
 
 router = APIRouter(prefix="/api-info", tags=["API Catalog"])
@@ -28,45 +27,24 @@ router = APIRouter(prefix="/api-info", tags=["API Catalog"])
 client_service = ClientService()
 
 
-def _merge_live_pan_apis(catalog: List[dict], live_names: List[str]) -> List[dict]:
-    """Mark catalog rows when their PAN collection is live; add PAN-only APIs."""
-    catalog_names = {item.get("name") for item in catalog if item.get("name")}
+def _enrich_catalog_with_response_db_status(catalog: List[dict], live_names: List[str]) -> List[dict]:
+    """
+    Add response_db mapping status to catalog rows only.
+
+    APIs are never auto-imported from response_db — they must be created in the
+    catalog first; collection ``result_{api_name}`` is linked when it appears.
+    """
     live_set = set(live_names)
-    merged = []
+    enriched = []
     for item in catalog:
         row = dict(item)
         name = row.get("name")
-        if name in live_set:
-            row["pan_status"] = "live"
-            row["pan_collection"] = f"result_{name}"
-        else:
-            row["pan_status"] = "pending"
-            row["pan_collection"] = f"result_{name}" if name else None
-        merged.append(row)
-    for name in live_names:
-        if name in catalog_names:
-            continue
-        merged.append({
-            "id": name,
-            "name": name,
-            "description": f"Discovered from PAN collection result_{name}",
-            "category": "vehicle",
-            "endpoint": f"/{name}",
-            "method": "POST",
-            "headers": [],
-            "request_schema": None,
-            "response_schema": None,
-            "is_active": True,
-            "pricing_success": 0.5,
-            "pricing_not_found": 0.5,
-            "currency": "INR",
-            "documentation": None,
-            "source": "pan",
-            "pan_status": "live",
-            "pan_collection": f"result_{name}",
-        })
-    merged.sort(key=lambda item: (item.get("name") or "").lower())
-    return merged
+        if name:
+            row["response_collection"] = f"result_{name}"
+            row["response_db_status"] = "live" if name in live_set else "pending"
+        enriched.append(row)
+    enriched.sort(key=lambda item: (item.get("name") or "").lower())
+    return enriched
 
 
 # ============================================================================
@@ -117,12 +95,17 @@ async def list_apis(
     _=Depends(get_current_user_optional),
 ):
     """
-    List APIs from the catalog merged with live PAN-discovered APIs.
+    List APIs from the application catalog with optional response_db link status.
+
+    Only catalog entries are returned — response_db collections are never listed
+    unless the API was created here first.
     """
     catalog = await client_service.get_all_apis(db)
-    live_names = await get_live_pan_api_names(response_db)
-    merged = _merge_live_pan_apis(catalog, live_names)
-    return {"data": merged, "total": len(merged)}
+    live_names = await get_live_response_api_names(response_db)
+    return {
+        "data": _enrich_catalog_with_response_db_status(catalog, live_names),
+        "total": len(catalog),
+    }
 
 
 @router.get(
@@ -136,40 +119,28 @@ async def get_api(
     response_db=Depends(get_response_database),
     _=Depends(get_current_user_optional),
 ):
-    """
-    Get a single API from the catalog by ID (full details for edit/view).
-    """
+    """Get a single API from the catalog by ID."""
     from bson import ObjectId
+    from app.services.client_service import _serialize
+
     try:
         doc = await db["apis"].find_one({"_id": ObjectId(api_id)})
     except Exception:
         doc = None
+
     if doc is None:
-        live_names = await get_live_pan_api_names(response_db)
-        if api_id not in live_names:
-            raise HTTPException(
-                status_code=status.HTTP_404_NOT_FOUND,
-                detail="API not found",
-            )
-        return {
-            "id": api_id,
-            "name": api_id,
-            "description": f"Discovered from PAN collection result_{api_id}",
-            "category": "vehicle",
-            "endpoint": f"/{api_id}",
-            "method": "POST",
-            "headers": [],
-            "request_schema": None,
-            "response_schema": None,
-            "is_active": True,
-            "pricing_success": 0.5,
-            "pricing_not_found": 0.5,
-            "currency": "INR",
-            "documentation": None,
-            "source": "pan",
-        }
-    from app.services.client_service import _serialize
-    return _serialize(doc)
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="API not found",
+        )
+
+    result = _serialize(doc)
+    name = result.get("name")
+    if name:
+        live_names = set(await get_live_response_api_names(response_db))
+        result["response_collection"] = f"result_{name}"
+        result["response_db_status"] = "live" if name in live_names else "pending"
+    return result
 
 
 @router.post(
@@ -189,18 +160,16 @@ async def create_api(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail=(
                 f"API name '{api_name}' is invalid. Use lowercase letters, numbers, "
-                f"and underscores (e.g. test, rc_data). PAN collection will be "
+                f"and underscores (e.g. test, rc_data). Response_db collection will be "
                 f"result_{api_name} when created."
             ),
         )
 
-    existing = await db["apis"].find_one({
-        "name": {"$regex": f"^{body.name}$", "$options": "i"}
-    })
+    existing = await db["apis"].find_one({"name": api_name})
     if existing:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
-            detail=f"API with name '{body.name}' already exists.",
+            detail=f"API with name '{api_name}' already exists.",
         )
 
     now = datetime.now(timezone.utc)
@@ -268,8 +237,8 @@ async def update_api(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail=(
                 f"API name '{update_data['name']}' is invalid. Use lowercase letters, "
-                f"numbers, and underscores. PAN collection will be "
-                f"result_{update_data['name'].strip()} when created."
+                f"numbers, and underscores. Response_db collection will be "
+                f"result_{update_data['name']} when created."
             ),
         )
 

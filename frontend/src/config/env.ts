@@ -5,7 +5,7 @@ export const ENV = {
   IS_DEVELOPMENT: import.meta.env.DEV,
   IS_PRODUCTION: import.meta.env.PROD,
   API_BASE_URL: import.meta.env.VITE_API_BASE_URL,
-  /** Dashboard auto-refresh interval (ms). Slower in production to reduce PAN DB load. */
+  /** Dashboard auto-refresh interval (ms). Slower in production to reduce response_db load. */
   DASHBOARD_POLL_MS:
     Number.isFinite(parsedPollMs) && parsedPollMs >= 5000
       ? parsedPollMs

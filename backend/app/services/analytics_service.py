@@ -9,7 +9,7 @@ aggregated counts/graph points.
 Flow for a selected client + API:
     username/client_id
         -> user_mapping (client_id, access_key, apis[])
-        -> api_name -> result_{api_name} PAN collection (discovered live)
+        -> api_name -> result_{api_name} response_db collection (discovered live)
         -> query { access_key, created_time range }
         -> read response.response_code (and fallbacks)
         -> aggregate
@@ -40,12 +40,18 @@ from app.utils.dashboard_time import (
 )
 from app.services.api_collections import (
     get_response_collection_for_api,
-    get_live_pan_api_names,
+    get_live_response_api_names,
+    get_catalog_api_names,
     is_catalog_api_name,
-    is_live_pan_api,
+    is_live_response_db_api,
     is_valid_api_name,
+    is_registered_api_name,
 )
-from app.services.response_db_guard import pan_aggregate, pan_count_documents, pan_find_to_list
+from app.services.response_db_guard import (
+    response_db_aggregate,
+    response_db_count_documents,
+    response_db_find_to_list,
+)
 
 # -----------------------------------------------------------------------------
 # Response status normalization
@@ -128,8 +134,8 @@ async def resolve_api_names_for_scope(
     """
     APIs available for dashboard charts for the selected scope.
 
-    - all users  -> live PAN APIs (collections that exist now)
-    - one client -> all assigned APIs (shows 0 until result_{name} is created)
+    - all users  -> active catalog APIs (response_db reads use result_{name})
+    - one client -> assigned catalog APIs for that client
     """
     scope = await resolve_query_scope(db, client_id, response_db=response_db)
     return scope["api_names"]
@@ -139,19 +145,19 @@ async def resolve_query_scope(
     db, client_id: str = "all", response_db=None,
 ) -> Dict[str, Any]:
     """
-    Resolve PAN query scope for dashboard analytics.
+    Resolve response_db query scope for dashboard analytics.
 
     Returns:
         api_names:   API names to query
-        key_scope:   access_key filter (None = global PAN query)
+        key_scope:   access_key filter (None = global response_db query)
         client_name: display label
         client_id:   normalized client id string
     """
     is_all = client_id in ("all", None, "")
-    live_names = set(await get_live_pan_api_names(response_db))
+    catalog_names = set(await get_catalog_api_names(db))
     if is_all:
         return {
-            "api_names": sorted(live_names),
+            "api_names": await get_catalog_api_names(db, active_only=True),
             "key_scope": None,
             "client_name": "All Clients",
             "client_id": "all",
@@ -169,7 +175,7 @@ async def resolve_query_scope(
     client = await db["clients"].find_one({"_id": mapping.get("client_id")})
     assigned = [
         n for n in (mapping.get("apis") or [])
-        if is_catalog_api_name(n)
+        if n in catalog_names and is_catalog_api_name(n)
     ]
     return {
         "api_names": sorted(assigned),
@@ -198,8 +204,7 @@ async def resolve_api_options_for_scope(
     """
     Dropdown options for dashboard / detailed charts.
 
-    PAN scope drives which APIs appear. Manual catalog entries only enrich
-    id/category when they exist — nothing is auto-created.
+    Catalog APIs drive the list; response_db is only used when reading analytics data.
     """
     names = await resolve_api_names_for_scope(db, client_id, response_db=response_db)
     if not names:
@@ -229,8 +234,6 @@ async def _resolve_api_name(
     async def _accept(name: Optional[str]) -> Optional[str]:
         if not name or not is_catalog_api_name(name):
             return None
-        if await is_live_pan_api(name, response_db):
-            return name
         doc = await db["apis"].find_one({"name": name}, {"_id": 1})
         return name if doc else None
 
@@ -406,7 +409,7 @@ async def get_usage_summary(
                         "count": {"$sum": 1}}},
         ]
         try:
-            groups = await pan_aggregate(response_db[coll], pipeline)
+            groups = await response_db_aggregate(response_db[coll], pipeline)
         except Exception:
             return {}
         return _status_map_from_groups(groups)
@@ -472,7 +475,7 @@ async def get_usage_by_date(
             }},
         ]
         try:
-            groups = await pan_aggregate(response_db[coll], pipeline)
+            groups = await response_db_aggregate(response_db[coll], pipeline)
         except Exception:
             return
         for g in groups:
@@ -590,7 +593,7 @@ async def get_user_api_stats(
             pipeline.append({"$match": {"access_key": key_scope}})
         pipeline.append({"$facet": facet})
         try:
-            docs = await pan_aggregate(response_db[coll], pipeline)
+            docs = await response_db_aggregate(response_db[coll], pipeline)
         except Exception:
             return {"api_name": name, "current": {}, "previous": {}, "avg_time": []}
         d = docs[0] if docs else {}
@@ -932,7 +935,7 @@ async def get_api_usage_stats(
         }},
     ]
     try:
-        docs = await pan_aggregate(response_db[coll], pipeline)
+        docs = await response_db_aggregate(response_db[coll], pipeline)
     except Exception:
         docs = []
     d = docs[0] if docs else {}
@@ -1067,7 +1070,7 @@ async def get_client_details_stats(
             }},
         ]
         try:
-            docs = await pan_aggregate(response_db[coll], pipeline)
+            docs = await response_db_aggregate(response_db[coll], pipeline)
         except Exception:
             return {"name": name, "buckets": [], "avg_time": []}
         d = docs[0] if docs else {}
@@ -1218,7 +1221,7 @@ async def get_client_analytics_stats(
                 }},
             ]
             try:
-                docs = await pan_aggregate(response_db[coll], pipeline)
+                docs = await response_db_aggregate(response_db[coll], pipeline)
             except Exception:
                 return {"name": name, "counts": {}, "avg": None}
             d = docs[0] if docs else {}
@@ -1261,6 +1264,7 @@ async def get_client_analytics_stats(
 
     # Build per (client, api) rows for the resolved scope.
     records: List[dict] = []
+    catalog_names = set(await get_catalog_api_names(db))
     for mapping in mappings:
         if not isinstance(mapping, dict):
             continue
@@ -1271,7 +1275,7 @@ async def get_client_analytics_stats(
             names = [api_name_filter] if api_name_filter in assigned else []
         else:
             names = list(assigned)
-        names = [n for n in names if is_catalog_api_name(n)]
+        names = [n for n in names if n in catalog_names]
         if not names:
             continue
         records.extend(await _counts_for_client(mapping, names))
@@ -1444,10 +1448,10 @@ async def export_client_analytics_detail(
     request_field = API_REQUEST_FIELD_MAP.get(resolved_api, "request")
     header_request = f"request.{request_field}"
 
-    total = await pan_count_documents(response_db[coll], match)
+    total = await response_db_count_documents(response_db[coll], match)
     truncated = total > MAX_ANALYTICS_EXPORT_ROWS
 
-    docs = await pan_find_to_list(
+    docs = await response_db_find_to_list(
         response_db[coll],
         match,
         projection,

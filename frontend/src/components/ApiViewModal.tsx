@@ -17,6 +17,8 @@ export interface ApiInfoItem {
   pricing_not_found?: number;
   currency?: string;
   documentation?: string;
+  response_collection?: string;
+  response_db_status?: 'live' | 'pending';
   created_at?: string;
   updated_at?: string;
 }

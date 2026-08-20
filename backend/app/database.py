@@ -22,7 +22,7 @@ from urllib.parse import urlparse
 from pymongo import ReadPreference
 
 from app.config import settings
-from app.services.api_collections import get_live_pan_api_names, get_live_response_collections
+from app.services.api_collections import get_live_response_api_names, get_live_response_collections
 
 _READ_PREFERENCE_MAP = {
     "primary": ReadPreference.PRIMARY,
@@ -34,7 +34,7 @@ _READ_PREFERENCE_MAP = {
 
 
 def _response_client_kwargs() -> dict:
-    """Connection options for the read-only PAN analytics client."""
+    """Connection options for the read-only response_db analytics client."""
     kwargs = {
         "maxPoolSize": max(1, settings.RESPONSE_DB_MAX_POOL_SIZE),
         "minPoolSize": 0,
@@ -196,7 +196,7 @@ async def verify_response_database() -> bool:
     """
     Check whether the external response database is reachable.
 
-    The PAN database is considered ready when the connection works and at least
+    The response database is considered ready when the connection works and at least
     one mapped collection exists. Missing map entries are warnings only — the
     dashboard uses live collection discovery per request.
     """
@@ -221,12 +221,12 @@ async def verify_response_database() -> bool:
             f"[WARN] Response database '{db_name}' is reachable but no result_* collections were found.\n"
             f"  Connection: {target}\n"
             f"  Found in database: {', '.join(sorted(collections)) or '(none)'}\n"
-            f"  Dashboard analytics will be empty until PAN collections are created."
+            f"  Dashboard analytics will be empty until response_db collections are created."
         )
         return False
 
     db_manager.response_db_ready = True
-    api_names = await get_live_pan_api_names(response_db)
+    api_names = await get_live_response_api_names(response_db)
     print(
         f"[OK] Response database '{db_name}' ready "
         f"({len(api_names)} APIs from {len(available)} collections) - {target}\n"

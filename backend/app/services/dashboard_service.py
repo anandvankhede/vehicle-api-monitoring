@@ -21,7 +21,7 @@ from bson import ObjectId
 from datetime import datetime, timezone, timedelta
 from typing import List, Optional, Dict, Any
 
-from app.services.api_collections import get_live_pan_api_names
+from app.services.api_collections import get_catalog_api_names
 
 
 def _oid(id_str: str) -> ObjectId:
@@ -73,10 +73,7 @@ class DashboardService:
         computed from usage_reports.
         """
         total_clients = await db["clients"].count_documents({})
-        if response_db is not None:
-            total_apis = len(await get_live_pan_api_names(response_db))
-        else:
-            total_apis = await db["apis"].count_documents({})
+        total_apis = len(await get_catalog_api_names(db))
 
         # Aggregate usage by API name to compute success rates (last 30 days)
         now = datetime.now(timezone.utc)
@@ -156,7 +153,7 @@ class DashboardService:
     # ------------------------------------------------------------------
 
     async def get_api_options(self, db, client_id: str = "all", response_db=None):
-        """Return APIs for the monitoring dropdown (PAN scope + client mapping)."""
+        """Return APIs for the monitoring dropdown (catalog scope + client mapping)."""
         from app.services import analytics_service as analytics
         return await analytics.resolve_api_options_for_scope(
             db, client_id, response_db=response_db,

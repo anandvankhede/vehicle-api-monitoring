@@ -20,10 +20,10 @@ import csv
 import io
 
 from app.services.api_collections import (
-    get_live_pan_api_names,
+    get_catalog_api_names,
     get_response_collection_for_api,
 )
-from app.services.response_db_guard import pan_aggregate
+from app.services.response_db_guard import response_db_aggregate
 
 
 def _oid(id_str: str) -> ObjectId:
@@ -162,8 +162,8 @@ class ReportService:
         if not mapping:
             return []
         access_key = mapping.get("access_key")
-        live = set(await get_live_pan_api_names(response_db))
-        names = [n for n in (mapping.get("apis") or []) if n in live]
+        catalog = set(await get_catalog_api_names(db))
+        names = [n for n in (mapping.get("apis") or []) if n in catalog]
         if not access_key or not names:
             return []
 
@@ -192,7 +192,7 @@ class ReportService:
                             "count": {"$sum": 1}}},
             ]
             try:
-                docs = await pan_aggregate(response_db[coll], pipeline)
+                docs = await response_db_aggregate(response_db[coll], pipeline)
             except Exception:
                 return
             sp, np = price.get(name, (0.0, 0.0))
@@ -251,8 +251,8 @@ class ReportService:
         if not mapping:
             return None
         access_key = mapping.get("access_key")
-        live = set(await get_live_pan_api_names(response_db))
-        names = [n for n in (mapping.get("apis") or []) if n in live]
+        catalog = set(await get_catalog_api_names(db))
+        names = [n for n in (mapping.get("apis") or []) if n in catalog]
         if not access_key or not names:
             return None
 
@@ -299,7 +299,7 @@ class ReportService:
                 }},
             ]
             try:
-                docs = await pan_aggregate(response_db[coll], pipeline)
+                docs = await response_db_aggregate(response_db[coll], pipeline)
             except Exception:
                 return
             d = docs[0] if docs else {}

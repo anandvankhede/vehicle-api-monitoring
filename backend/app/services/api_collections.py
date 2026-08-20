@@ -2,14 +2,14 @@
 Dynamic API ↔ Response Collection Mapping
 =========================================
 
-PAN response collections are discovered at runtime from the response database.
-Each API response store follows the naming convention:
+Response database collections are discovered at runtime. Each API response
+store follows the naming convention:
 
     MongoDB collection: result_{api_name}
     Application api_name: strip the ``result_`` prefix
 
-Collection names are cached briefly (PAN_COLLECTION_CACHE_SECONDS) to avoid
-calling list_collection_names() on every dashboard request.
+Collection names are cached briefly (RESPONSE_DB_COLLECTION_CACHE_SECONDS)
+to avoid calling list_collection_names() on every dashboard request.
 """
 
 from __future__ import annotations
@@ -22,10 +22,10 @@ from app.config import settings
 
 RESULT_COLLECTION_PREFIX = "result_"
 
-# api_name -> collection_name (only for non-standard PAN collection names)
+# api_name -> collection_name (only for non-standard response_db collection names)
 API_COLLECTION_OVERRIDES: Dict[str, str] = {}
 
-# Lowercase snake_case application API names (maps to result_{api_name} on PAN).
+# Lowercase snake_case application API names (maps to result_{api_name} on response_db).
 _CATALOG_API_NAME_RE = re.compile(r"^[a-z][a-z0-9_]*$")
 
 _collection_cache: Optional[Tuple[float, List[str]]] = None
@@ -35,8 +35,8 @@ def is_catalog_api_name(api_name: str) -> bool:
     """
     True when api_name is a valid application API identifier.
 
-    Catalog entries and client assignments use this name; PAN stores responses
-    in collection ``result_{api_name}`` when that collection is created.
+    Catalog entries and client assignments use this name; the response database
+    stores responses in collection ``result_{api_name}`` when that collection exists.
     """
     if not api_name or api_name == "all":
         return False
@@ -46,12 +46,12 @@ def is_catalog_api_name(api_name: str) -> bool:
 
 
 def is_response_collection(collection_name: str) -> bool:
-    """True when the collection name looks like a PAN API response store."""
+    """True when the collection name looks like a response_db API response store."""
     return bool(collection_name) and collection_name.startswith(RESULT_COLLECTION_PREFIX)
 
 
 def api_name_from_collection(collection_name: str) -> Optional[str]:
-    """Derive application api_name from a PAN collection name."""
+    """Derive application api_name from a response_db collection name."""
     if collection_name in _override_collection_to_api():
         return _override_collection_to_api()[collection_name]
     if not is_response_collection(collection_name):
@@ -61,7 +61,7 @@ def api_name_from_collection(collection_name: str) -> Optional[str]:
 
 
 def collection_for_api_name(api_name: str) -> Optional[str]:
-    """Map application api_name to its PAN collection name."""
+    """Map application api_name to its response_db collection name."""
     if not api_name or api_name == "all":
         return None
     if api_name in API_COLLECTION_OVERRIDES:
@@ -70,7 +70,7 @@ def collection_for_api_name(api_name: str) -> Optional[str]:
 
 
 def get_response_collection_for_api(api_name: str) -> Optional[str]:
-    """Return the PAN collection for an application api_name."""
+    """Return the response_db collection for an application api_name."""
     return collection_for_api_name(api_name)
 
 
@@ -87,13 +87,13 @@ def _collections_from_names(names: List[str]) -> List[str]:
 async def get_live_response_collections(
     response_db, *, force_refresh: bool = False,
 ) -> List[str]:
-    """Return PAN collection names that currently exist (cached)."""
+    """Return response_db collection names that currently exist (cached)."""
     global _collection_cache
 
     if response_db is None:
         return []
 
-    ttl = max(0, settings.PAN_COLLECTION_CACHE_SECONDS)
+    ttl = max(0, settings.RESPONSE_DB_COLLECTION_CACHE_SECONDS)
     now = time.monotonic()
     if (
         not force_refresh
@@ -116,8 +116,8 @@ async def get_live_response_collections(
     return live
 
 
-async def get_live_pan_api_names(response_db) -> List[str]:
-    """Return application api_names for all live PAN collections."""
+async def get_live_response_api_names(response_db) -> List[str]:
+    """Return application api_names for all live response_db collections."""
     collections = await get_live_response_collections(response_db)
     existing = set(collections)
     api_names: Set[str] = set()
@@ -132,7 +132,7 @@ async def get_live_pan_api_names(response_db) -> List[str]:
 
 
 async def get_live_api_collection_map(response_db) -> Dict[str, str]:
-    """Return {api_name: collection_name} for all live PAN APIs."""
+    """Return {api_name: collection_name} for all live response_db APIs."""
     collections = await get_live_response_collections(response_db)
     existing = set(collections)
     result: Dict[str, str] = {}
@@ -146,29 +146,40 @@ async def get_live_api_collection_map(response_db) -> Dict[str, str]:
     return result
 
 
-async def is_live_pan_api(api_name: str, response_db=None) -> bool:
-    """True when api_name has a matching collection on the PAN database right now."""
+async def is_live_response_db_api(api_name: str, response_db=None) -> bool:
+    """True when api_name has a matching collection on the response_db right now."""
     if not is_catalog_api_name(api_name):
         return False
     if response_db is None:
         return collection_for_api_name(api_name) is not None
-    live = set(await get_live_pan_api_names(response_db))
+    live = set(await get_live_response_api_names(response_db))
     return api_name in live
 
 
 async def is_valid_api_name(api_name: str, response_db=None) -> bool:
-    """Alias for live PAN check (used by analytics query endpoints)."""
-    return await is_live_pan_api(api_name, response_db)
+    """Alias for live response_db check (used by analytics query endpoints)."""
+    return await is_live_response_db_api(api_name, response_db)
+
+
+async def get_catalog_api_names(db, *, active_only: bool = False) -> List[str]:
+    """Return API names registered in the application catalog (source of truth)."""
+    query: dict = {}
+    if active_only:
+        query["is_active"] = True
+    docs = await db["apis"].find(query, {"name": 1}).to_list(length=None)
+    return sorted(
+        doc["name"] for doc in docs
+        if doc.get("name") and is_catalog_api_name(doc["name"])
+    )
 
 
 async def is_registered_api_name(db, api_name: str, response_db=None) -> bool:
     """
-    True when the API is known to the app: catalog entry and/or live PAN collection.
+    True when the API exists in the application catalog.
 
-    Used when creating catalog entries or assigning APIs before PAN data exists.
+    Catalog is the source of truth for API Management and client assignment.
+    Response_db collection ``result_{api_name}`` is linked when it exists.
     """
     if not is_catalog_api_name(api_name):
         return False
-    if await db["apis"].find_one({"name": api_name}, {"_id": 1}):
-        return True
-    return await is_live_pan_api(api_name, response_db)
+    return bool(await db["apis"].find_one({"name": api_name}, {"_id": 1}))

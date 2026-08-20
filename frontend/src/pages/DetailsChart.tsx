@@ -193,7 +193,7 @@ export const DetailsChart: React.FC = () => {
           </h3>
           <p className="text-xs" style={{ color: 'var(--text-muted)' }}>
             {responseDbAvailable === false
-              ? 'Detailed charts read from the PAN response database. Configure RESPONSE_MONGO_URL on the server and restart the backend.'
+              ? 'Detailed charts read from the response database. Configure RESPONSE_MONGO_URL on the server and restart the backend.'
               : `No trend data for ${selectedUserLabel} in this time range.`}
           </p>
         </div>

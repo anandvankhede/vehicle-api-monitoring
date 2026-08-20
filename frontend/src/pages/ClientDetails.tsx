@@ -157,7 +157,7 @@ const ApiManagementTab: React.FC<{ client: Client; setToast: (t: string) => void
         clientService.getClientApiRequestsAsync(client.id, 'admin'),
       ]);
       setAccessRecords(access);
-      setAvailableApis(apiCatalog.data as ApiInfo[]);
+      setAvailableApis((apiCatalog.data as ApiInfo[]).filter((item) => item.is_active !== false));
       setPendingApiNames(new Set(
         requests.filter((r) => r.status === 'Pending Approval').map((r) => r.api_name)
       ));

@@ -1,5 +1,5 @@
 """
-Read-only PAN / response database access with load limits.
+Read-only response database access with load limits.
 
 All monitoring reads should go through these helpers so we:
   - cap concurrent queries (avoid hammering shared Mongo)
@@ -40,15 +40,15 @@ def aggregate_kwargs() -> Dict[str, Any]:
 
 
 @asynccontextmanager
-async def pan_read_slot():
-    """Limit how many PAN queries run at the same time."""
+async def response_db_read_slot():
+    """Limit how many response_db queries run at the same time."""
     async with _query_semaphore():
         yield
 
 
-async def pan_aggregate(collection, pipeline: list) -> List[dict]:
+async def response_db_aggregate(collection, pipeline: list) -> List[dict]:
     """Run a read-only aggregation with timeout and concurrency limits."""
-    async with pan_read_slot():
+    async with response_db_read_slot():
         try:
             cursor = collection.aggregate(pipeline, **aggregate_kwargs())
             return await cursor.to_list(length=None)
@@ -56,8 +56,8 @@ async def pan_aggregate(collection, pipeline: list) -> List[dict]:
             return []
 
 
-async def pan_count_documents(collection, match: dict) -> int:
-    async with pan_read_slot():
+async def response_db_count_documents(collection, match: dict) -> int:
+    async with response_db_read_slot():
         try:
             kwargs: Dict[str, Any] = {}
             ms = query_max_ms()
@@ -68,7 +68,7 @@ async def pan_count_documents(collection, match: dict) -> int:
             return 0
 
 
-async def pan_find_to_list(
+async def response_db_find_to_list(
     collection,
     match: dict,
     projection: dict,
@@ -78,7 +78,7 @@ async def pan_find_to_list(
     hint=None,
     batch_size: int = 1000,
 ) -> List[dict]:
-    async with pan_read_slot():
+    async with response_db_read_slot():
         try:
             cursor = collection.find(match, projection)
             if sort is not None:

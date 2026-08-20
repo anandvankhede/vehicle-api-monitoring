@@ -186,7 +186,13 @@ export const ApiManagement: React.FC = () => {
 
                 {/* Body */}
                 <h3 className="text-sm font-bold mb-1" style={{ color: 'var(--text-primary)' }}>{apiItem.name}</h3>
-                <p className="text-xs mb-3" style={{ color: 'var(--text-secondary)' }}>{apiItem.description}</p>
+                <p className="text-xs mb-2" style={{ color: 'var(--text-secondary)' }}>{apiItem.description}</p>
+                {apiItem.response_collection && (
+                  <p className="text-[10px] mb-3 font-mono" style={{ color: 'var(--text-muted)' }}>
+                    Collection: {apiItem.response_collection}
+                    {apiItem.response_db_status === 'live' ? ' · linked' : ' · pending'}
+                  </p>
+                )}
 
                 {/* Actions */}
                 <div className="flex items-center gap-2 pt-3 border-t" style={{ borderColor: 'var(--border)' }}>

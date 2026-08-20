@@ -21,6 +21,7 @@ from app.database import get_database, get_response_database
 from app.dependencies.auth import get_current_admin
 from app.schemas.common import ErrorResponse
 from app.services import analytics_service as analytics
+from app.services.api_collections import is_registered_api_name
 
 router = APIRouter(prefix="/analytics", tags=["Dashboard Analytics"])
 
@@ -40,7 +41,7 @@ async def get_apis(
     response_db=Depends(get_response_database),
     _=Depends(get_current_admin),
 ):
-    """Active API options discovered from live PAN collections."""
+    """Active API options from the application catalog."""
     return await analytics.get_dashboard_apis(db, response_db=response_db)
 
 
@@ -52,8 +53,7 @@ async def _resolve_scope(db, response_db, client_id: str, api_name: str):
     mapping is None (aggregate across all clients).
     """
     if api_name != "all":
-        from app.services.api_collections import is_registered_api_name
-        if not await is_registered_api_name(db, api_name, response_db):
+        if not await is_registered_api_name(db, api_name):
             raise HTTPException(status_code=400, detail="Unknown api_name.")
     if client_id in ("all", None, ""):
         return None, api_name

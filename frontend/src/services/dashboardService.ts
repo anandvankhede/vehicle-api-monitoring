@@ -112,7 +112,7 @@ export const dashboardService = {
 
   /**
    * Fetch APIs for Main API Monitoring — scoped by user filter.
-   * All users: every PAN API. Specific client: that client's assigned APIs.
+   * All users: every catalog API. Specific client: that client's assigned APIs.
    */
   async getAvailableApis(clientId: string = 'all'): Promise<ApiOption[]> {
     const toOption = (a: { id: string; name: string; category?: string }): ApiOption => ({
