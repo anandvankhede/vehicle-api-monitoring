@@ -2,14 +2,22 @@ import React, { useState, useEffect } from 'react';
 import {
   Search, Users, ToggleLeft, ToggleRight,
   Eye, EyeOff, Trash2, Building2, Key, Save, ArrowLeft,
-  CheckCircle, XCircle, Clock, AlertTriangle, X, Activity
+  CheckCircle, XCircle, Clock, AlertTriangle, X, Activity, Pencil
 } from 'lucide-react';
 import { Navigate } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
 import { api } from '../services/apiClient';
 import clientService from '../services/clientService';
 import type { ApiInfo } from '../types/client';
-import type { Client, ClientApiAccess, RequestLimitFrequency, Currency } from '../types/client';
+import type { Client, ClientApiAccess, RequestLimitFrequency, Currency, ClientApiStatus } from '../types/client';
+
+type ApiAccessEditDraft = {
+  api_key: string;
+  request_limit: number;
+  limit_frequency: RequestLimitFrequency;
+  current_usage: number;
+  status: ClientApiStatus;
+};
 
 export const ClientManagementClients: React.FC = () => {
   const { isAuthenticated, user } = useAuth();
@@ -30,8 +38,9 @@ export const ClientManagementClients: React.FC = () => {
   const [showAssignDialog, setShowAssignDialog] = useState(false);
   const [showPasswordDialog, setShowPasswordDialog] = useState(false);
   const [newPassword, setNewPassword] = useState('');
-  const [editingApiKey, setEditingApiKey] = useState('');
-  const [editingClientId, setEditingClientId] = useState<string | null>(null);
+  const [editingAccessId, setEditingAccessId] = useState<string | null>(null);
+  const [editDraft, setEditDraft] = useState<ApiAccessEditDraft | null>(null);
+  const [editShowKey, setEditShowKey] = useState(false);
   const [assignApiName, setAssignApiName] = useState('');
   const [assignSuccessPrice, setAssignSuccessPrice] = useState(0.5);
   const [assignNotFoundPrice, setAssignNotFoundPrice] = useState(0.5);
@@ -93,6 +102,7 @@ export const ClientManagementClients: React.FC = () => {
   };
 
   const openClientDetails = async (client: Client) => {
+    cancelEditingAccess();
     setSelectedClient(client);
     await Promise.all([loadClientApis(client.id), loadApis()]);
   };
@@ -156,31 +166,43 @@ export const ClientManagementClients: React.FC = () => {
     }
   };
 
-  const handleSaveApiKey = async () => {
-    if (!editingClientId || !editingApiKey.trim()) return;
-    const access = clientApis.find(a => a.client_id === editingClientId);
-    if (access) {
-      try {
-        await api.updateApiAccess(access.id, { api_key: editingApiKey.trim() });
-        if (selectedClient) await loadClientApis(selectedClient.id);
-        setEditingClientId(null);
-        setEditingApiKey('');
-        setToast('API key updated successfully.');
-      } catch {
-        setToast('Failed to update API key.');
-      }
-    }
+  const startEditingAccess = (access: ClientApiAccess) => {
+    setEditingAccessId(access.id);
+    setEditDraft({
+      api_key: access.api_key || '',
+      request_limit: access.request_limit,
+      limit_frequency: access.limit_frequency,
+      current_usage: access.current_usage,
+      status: access.status,
+    });
+    setEditShowKey(false);
   };
 
-  const handleUpdateApiAccess = async (
-    access: ClientApiAccess,
-    updates: Partial<Pick<ClientApiAccess, 'request_limit' | 'limit_frequency' | 'current_usage' | 'status'>>,
-  ) => {
+  const cancelEditingAccess = () => {
+    setEditingAccessId(null);
+    setEditDraft(null);
+    setEditShowKey(false);
+  };
+
+  const handleSaveAccessEdit = async () => {
+    if (!editingAccessId || !editDraft) return;
+    if (!editDraft.api_key.trim()) {
+      setToast('API key cannot be empty.');
+      return;
+    }
     try {
-      await api.updateApiAccess(access.id, updates);
+      const updates = {
+        api_key: editDraft.api_key.trim(),
+        request_limit: editDraft.request_limit,
+        limit_frequency: editDraft.limit_frequency,
+        current_usage: editDraft.current_usage,
+        status: editDraft.status,
+      };
+      await api.updateApiAccess(editingAccessId, updates);
       setClientApis((prev) =>
-        prev.map((a) => (a.id === access.id ? { ...a, ...updates } : a))
+        prev.map((a) => (a.id === editingAccessId ? { ...a, ...updates } : a))
       );
+      cancelEditingAccess();
       setToast('API configuration saved.');
     } catch {
       setToast('Failed to save API configuration.');
@@ -360,7 +382,7 @@ export const ClientManagementClients: React.FC = () => {
       ) : (
         <div>
           <button
-            onClick={() => { setSelectedClient(null); setClientApis([]); }}
+            onClick={() => { cancelEditingAccess(); setSelectedClient(null); setClientApis([]); }}
             className="flex items-center gap-1.5 text-sm font-medium mb-4 transition-colors"
             style={{ color: 'var(--primary)' }}
           >
@@ -518,124 +540,200 @@ export const ClientManagementClients: React.FC = () => {
                     }
 
                     const usagePercent = access.request_limit > 0 ? Math.min(100, Math.round((access.current_usage / access.request_limit) * 100)) : 0;
+                    const isEditing = editingAccessId === access.id;
+                    const draftUsagePercent = editDraft && editDraft.request_limit > 0
+                      ? Math.min(100, Math.round((editDraft.current_usage / editDraft.request_limit) * 100))
+                      : 0;
 
                     return (
                       <div key={api.name} className="rounded-lg p-4" style={{ backgroundColor: 'var(--card-inner)', border: '1px solid var(--border)' }}>
-                        <div className="flex items-center justify-between mb-2">
+                        <div className="flex items-center justify-between mb-3">
                           <p className="text-sm font-bold" style={{ color: 'var(--text-primary)' }}>{api.name}</p>
-                          <ApiStatusBadge status={access.status} />
-                        </div>
-
-                        <div className="space-y-2">
-                          <div>
-                            <div className="flex items-center justify-between text-xs mb-1">
-                              <span style={{ color: 'var(--text-muted)' }}>API Key</span>
+                          <div className="flex items-center gap-2">
+                            <ApiStatusBadge status={isEditing && editDraft ? editDraft.status : access.status} />
+                            {!isEditing && (
                               <button
-                                onClick={() => {
-                                  if (editingClientId === selectedClient.id) {
-                                    setEditingClientId(null);
-                                    setEditingApiKey('');
-                                  } else {
-                                    setEditingClientId(selectedClient.id);
-                                    setEditingApiKey(access.api_key || '');
-                                  }
-                                }}
-                                className="text-xs font-medium"
-                                style={{ color: 'var(--primary)' }}
+                                type="button"
+                                onClick={() => startEditingAccess(access)}
+                                className="flex items-center gap-1 px-2 py-1 rounded text-xs font-semibold transition-all hover:opacity-90"
+                                style={{ backgroundColor: 'var(--primary-light)', color: 'var(--primary)' }}
                               >
-                                {editingClientId === selectedClient.id ? 'Cancel' : 'Edit'}
+                                <Pencil className="w-3 h-3" />
+                                Edit
                               </button>
-                            </div>
-                            {editingClientId === selectedClient.id ? (
-                              <div className="flex items-center gap-2">
-                                <input
-                                  type="text"
-                                  value={editingApiKey}
-                                  onChange={(e) => setEditingApiKey(e.target.value)}
-                                  className="theme-input flex-1 px-2 py-1.5 rounded text-xs focus:outline-none"
-                                  placeholder="Enter API key"
-                                />
-                                <button
-                                  onClick={handleSaveApiKey}
-                                  className="flex items-center gap-1 px-2.5 py-1.5 rounded-lg text-xs font-semibold text-white transition-all hover:opacity-90"
-                                  style={{ backgroundColor: 'var(--primary)' }}
-                                >
-                                  <Save className="w-3.5 h-3.5" />
-                                  Save
-                                </button>
-                              </div>
-                            ) : (
-                              <div className="flex items-center gap-1.5">
-                                <code className="text-xs" style={{ color: 'var(--text-secondary)' }}>
-                                  {showKey[access.id] ? access.api_key : '••••••••••••••••••••••••'}
-                                </code>
-                                <button onClick={() => setShowKey((prev) => ({ ...prev, [access.id]: !prev[access.id] }))} className="text-xs font-medium" style={{ color: 'var(--primary)' }}>
-                                  {showKey[access.id] ? 'Hide' : 'Show'}
-                                </button>
-                              </div>
                             )}
                           </div>
                         </div>
 
-                        <div className="flex items-center justify-between text-xs">
-                          <span style={{ color: 'var(--text-muted)' }}>Request Limit</span>
-                          <input
-                            type="number"
-                            value={access.request_limit}
-                            onChange={(e) => handleUpdateApiAccess(access, { request_limit: Number(e.target.value) })}
-                            className="theme-input px-2 py-1 rounded text-xs focus:outline-none w-20 text-right"
-                            min={1}
-                          />
-                        </div>
-                        <div className="flex items-center justify-between text-xs">
-                          <span style={{ color: 'var(--text-muted)' }}>Frequency</span>
-                          <select
-                            value={access.limit_frequency}
-                            onChange={(e) => handleUpdateApiAccess(access, { limit_frequency: e.target.value as RequestLimitFrequency })}
-                            className="theme-input px-2 py-1 rounded text-xs focus:outline-none"
-                          >
-                            {frequencyOptions.map((f) => (
-                              <option key={f} value={f}>{f}</option>
-                            ))}
-                          </select>
-                        </div>
+                        {isEditing && editDraft ? (
+                          <div className="space-y-3">
+                            <div>
+                              <label className="block text-xs font-medium mb-1" style={{ color: 'var(--text-muted)' }}>API Key</label>
+                              <div className="flex items-center gap-2">
+                                <input
+                                  type={editShowKey ? 'text' : 'password'}
+                                  value={editDraft.api_key}
+                                  onChange={(e) => setEditDraft({ ...editDraft, api_key: e.target.value })}
+                                  className="theme-input flex-1 px-3 py-2 rounded-lg text-xs focus:outline-none font-mono"
+                                  placeholder="Enter API key"
+                                />
+                                <button
+                                  type="button"
+                                  onClick={() => setEditShowKey((v) => !v)}
+                                  className="p-2 rounded-lg"
+                                  style={{ color: 'var(--primary)', backgroundColor: 'var(--primary-light)' }}
+                                  title={editShowKey ? 'Hide' : 'Show'}
+                                >
+                                  {editShowKey ? <EyeOff className="w-3.5 h-3.5" /> : <Eye className="w-3.5 h-3.5" />}
+                                </button>
+                              </div>
+                            </div>
 
-                        <div className="flex items-center justify-between text-xs">
-                          <span style={{ color: 'var(--text-muted)' }}>Current Usage</span>
-                          <input
-                            type="number"
-                            value={access.current_usage}
-                            onChange={(e) => handleUpdateApiAccess(access, { current_usage: Number(e.target.value) })}
-                            className="theme-input px-2 py-1 rounded text-xs focus:outline-none w-24 text-right"
-                            min={0}
-                          />
-                        </div>
+                            <div className="grid grid-cols-2 gap-3">
+                              <div>
+                                <label className="block text-xs font-medium mb-1" style={{ color: 'var(--text-muted)' }}>Request Limit</label>
+                                <input
+                                  type="number"
+                                  value={editDraft.request_limit}
+                                  onChange={(e) => setEditDraft({ ...editDraft, request_limit: Number(e.target.value) })}
+                                  className="theme-input w-full px-3 py-2 rounded-lg text-xs focus:outline-none"
+                                  min={1}
+                                />
+                              </div>
+                              <div>
+                                <label className="block text-xs font-medium mb-1" style={{ color: 'var(--text-muted)' }}>Frequency</label>
+                                <select
+                                  value={editDraft.limit_frequency}
+                                  onChange={(e) => setEditDraft({ ...editDraft, limit_frequency: e.target.value as RequestLimitFrequency })}
+                                  className="theme-input w-full px-3 py-2 rounded-lg text-xs focus:outline-none"
+                                >
+                                  {frequencyOptions.map((f) => (
+                                    <option key={f} value={f}>{f}</option>
+                                  ))}
+                                </select>
+                              </div>
+                            </div>
 
-                        <div>
-                          <div className="flex items-center justify-between text-xs mb-1">
-                            <span style={{ color: 'var(--text-muted)' }}>Usage</span>
-                            <span style={{ color: 'var(--text-secondary)' }}>{access.current_usage.toLocaleString()} / {access.request_limit.toLocaleString()} ({usagePercent}%)</span>
+                            <div>
+                              <label className="block text-xs font-medium mb-1" style={{ color: 'var(--text-muted)' }}>Current Usage</label>
+                              <input
+                                type="number"
+                                value={editDraft.current_usage}
+                                onChange={(e) => setEditDraft({ ...editDraft, current_usage: Number(e.target.value) })}
+                                className="theme-input w-full px-3 py-2 rounded-lg text-xs focus:outline-none"
+                                min={0}
+                              />
+                            </div>
+
+                            <div>
+                              <div className="flex items-center justify-between text-xs mb-1">
+                                <span style={{ color: 'var(--text-muted)' }}>Usage</span>
+                                <span style={{ color: 'var(--text-secondary)' }}>
+                                  {editDraft.current_usage.toLocaleString()} / {editDraft.request_limit.toLocaleString()} ({draftUsagePercent}%)
+                                </span>
+                              </div>
+                              <div className="w-full h-1.5 rounded-full" style={{ backgroundColor: 'var(--card)' }}>
+                                <div
+                                  className="h-1.5 rounded-full transition-all"
+                                  style={{
+                                    width: `${draftUsagePercent}%`,
+                                    backgroundColor: draftUsagePercent > 80 ? 'var(--error)' : draftUsagePercent > 50 ? 'var(--warning)' : 'var(--success)',
+                                  }}
+                                />
+                              </div>
+                            </div>
+
+                            <div>
+                              <label className="block text-xs font-medium mb-1" style={{ color: 'var(--text-muted)' }}>API Status</label>
+                              <button
+                                type="button"
+                                onClick={() => setEditDraft({
+                                  ...editDraft,
+                                  status: editDraft.status === 'Active' ? 'Suspended' : 'Active',
+                                })}
+                                className="w-full flex items-center justify-center gap-1.5 px-3 py-2 rounded-lg text-xs font-semibold transition-all hover:opacity-90"
+                                style={{
+                                  backgroundColor: editDraft.status === 'Active' ? 'var(--error-bg)' : 'var(--success-bg)',
+                                  color: editDraft.status === 'Active' ? 'var(--error)' : 'var(--success)',
+                                }}
+                              >
+                                {editDraft.status === 'Active' ? 'Disable API' : 'Enable API'}
+                              </button>
+                            </div>
+
+                            <div className="flex gap-2 pt-1">
+                              <button
+                                type="button"
+                                onClick={cancelEditingAccess}
+                                className="flex-1 px-3 py-2 rounded-lg text-xs font-semibold"
+                                style={{ backgroundColor: 'var(--card)', color: 'var(--text-secondary)', border: '1px solid var(--border)' }}
+                              >
+                                Cancel
+                              </button>
+                              <button
+                                type="button"
+                                onClick={handleSaveAccessEdit}
+                                className="flex-1 flex items-center justify-center gap-1.5 px-3 py-2 rounded-lg text-xs font-semibold text-white transition-all hover:opacity-90"
+                                style={{ backgroundColor: 'var(--primary)' }}
+                              >
+                                <Save className="w-3.5 h-3.5" />
+                                Save Changes
+                              </button>
+                            </div>
                           </div>
-                          <div className="w-full h-1.5 rounded-full" style={{ backgroundColor: 'var(--card-inner)' }}>
-                            <div
-                              className="h-1.5 rounded-full"
-                              style={{
-                                width: `${usagePercent}%`,
-                                backgroundColor: usagePercent > 80 ? 'var(--error)' : usagePercent > 50 ? 'var(--warning)' : 'var(--success)',
-                              }}
-                            />
-                          </div>
-                        </div>
+                        ) : (
+                          <div className="space-y-2.5">
+                            <div className="flex items-center justify-between gap-2 text-xs">
+                              <span className="font-medium shrink-0" style={{ color: 'var(--text-muted)' }}>API Key</span>
+                              <div className="flex items-center gap-1.5 min-w-0">
+                                <code className="text-xs truncate" style={{ color: 'var(--text-secondary)' }}>
+                                  {showKey[access.id] ? access.api_key : '••••••••••••••••••••••••'}
+                                </code>
+                                <button
+                                  type="button"
+                                  onClick={() => setShowKey((prev) => ({ ...prev, [access.id]: !prev[access.id] }))}
+                                  className="text-xs font-medium shrink-0"
+                                  style={{ color: 'var(--primary)' }}
+                                >
+                                  {showKey[access.id] ? 'Hide' : 'Show'}
+                                </button>
+                              </div>
+                            </div>
 
-                        <div className="flex items-center gap-2 pt-1">
-                          <button
-                            onClick={() => handleUpdateApiAccess(access, { status: access.status === 'Active' ? 'Suspended' : 'Active' })}
-                            className="flex items-center gap-1 px-2.5 py-1.5 rounded-lg text-xs font-semibold transition-all hover:opacity-90"
-                            style={{ backgroundColor: access.status === 'Active' ? 'var(--error-bg)' : 'var(--success-bg)', color: access.status === 'Active' ? 'var(--error)' : 'var(--success)' }}
-                          >
-                            {access.status === 'Active' ? 'Disable API' : 'Enable API'}
-                          </button>
-                        </div>
+                            <div className="grid grid-cols-2 gap-x-4 gap-y-2 text-xs">
+                              <div>
+                                <span className="block font-medium mb-0.5" style={{ color: 'var(--text-muted)' }}>Request Limit</span>
+                                <span className="font-semibold" style={{ color: 'var(--text-primary)' }}>{access.request_limit.toLocaleString()}</span>
+                              </div>
+                              <div>
+                                <span className="block font-medium mb-0.5" style={{ color: 'var(--text-muted)' }}>Frequency</span>
+                                <span className="font-semibold" style={{ color: 'var(--text-primary)' }}>{access.limit_frequency}</span>
+                              </div>
+                              <div>
+                                <span className="block font-medium mb-0.5" style={{ color: 'var(--text-muted)' }}>Current Usage</span>
+                                <span className="font-semibold" style={{ color: 'var(--text-primary)' }}>{access.current_usage.toLocaleString()}</span>
+                              </div>
+                            </div>
+
+                            <div>
+                              <div className="flex items-center justify-between text-xs mb-1">
+                                <span style={{ color: 'var(--text-muted)' }}>Usage</span>
+                                <span style={{ color: 'var(--text-secondary)' }}>
+                                  {access.current_usage.toLocaleString()} / {access.request_limit.toLocaleString()} ({usagePercent}%)
+                                </span>
+                              </div>
+                              <div className="w-full h-1.5 rounded-full" style={{ backgroundColor: 'var(--card)' }}>
+                                <div
+                                  className="h-1.5 rounded-full"
+                                  style={{
+                                    width: `${usagePercent}%`,
+                                    backgroundColor: usagePercent > 80 ? 'var(--error)' : usagePercent > 50 ? 'var(--warning)' : 'var(--success)',
+                                  }}
+                                />
+                              </div>
+                            </div>
+                          </div>
+                        )}
                       </div>
                     );
                   })}
