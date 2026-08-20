@@ -132,10 +132,10 @@ async def resolve_api_names_for_scope(
     db, client_id: str = "all", response_db=None,
 ) -> List[str]:
     """
-    APIs available for dashboard charts for the selected scope.
+    APIs available for dashboard / detailed chart for the selected scope.
 
-    - all users  -> active catalog APIs (response_db reads use result_{name})
-    - one client -> assigned catalog APIs for that client
+    - all users  -> live response_db collections (result_*)
+    - one client -> catalog-assigned APIs for that client
     """
     scope = await resolve_query_scope(db, client_id, response_db=response_db)
     return scope["api_names"]
@@ -145,7 +145,10 @@ async def resolve_query_scope(
     db, client_id: str = "all", response_db=None,
 ) -> Dict[str, Any]:
     """
-    Resolve response_db query scope for dashboard analytics.
+    Resolve response_db query scope for dashboard and detailed chart analytics.
+
+    Dashboard views discover APIs from the response database when showing all
+    clients. Client-specific views use catalog-assigned APIs from user_mapping.
 
     Returns:
         api_names:   API names to query
@@ -154,10 +157,9 @@ async def resolve_query_scope(
         client_id:   normalized client id string
     """
     is_all = client_id in ("all", None, "")
-    catalog_names = set(await get_catalog_api_names(db))
     if is_all:
         return {
-            "api_names": await get_catalog_api_names(db, active_only=True),
+            "api_names": await get_live_response_api_names(response_db),
             "key_scope": None,
             "client_name": "All Clients",
             "client_id": "all",
@@ -172,6 +174,7 @@ async def resolve_query_scope(
             "client_id": client_id,
         }
 
+    catalog_names = set(await get_catalog_api_names(db))
     client = await db["clients"].find_one({"_id": mapping.get("client_id")})
     assigned = [
         n for n in (mapping.get("apis") or [])
@@ -204,7 +207,8 @@ async def resolve_api_options_for_scope(
     """
     Dropdown options for dashboard / detailed charts.
 
-    Catalog APIs drive the list; response_db is only used when reading analytics data.
+    All clients: APIs discovered live from response_db collections.
+    One client: catalog-assigned APIs for that client.
     """
     names = await resolve_api_names_for_scope(db, client_id, response_db=response_db)
     if not names:
@@ -222,6 +226,44 @@ async def resolve_api_options_for_scope(
             "category": (doc or {}).get("category", "vehicle"),
         })
     return options
+
+
+async def _resolve_dashboard_api_name(
+    db,
+    api_id: Optional[str] = None,
+    api_name: Optional[str] = None,
+    response_db=None,
+) -> Optional[str]:
+    """Resolve dashboard api id/name — catalog entry or live response_db API."""
+    live = set(await get_live_response_api_names(response_db))
+
+    async def _accept(name: Optional[str]) -> Optional[str]:
+        if not name or not is_catalog_api_name(name):
+            return None
+        if name in live:
+            return name
+        doc = await db["apis"].find_one({"name": name}, {"_id": 1})
+        return name if doc else None
+
+    if api_name:
+        resolved = await _accept(api_name)
+        if resolved:
+            return resolved
+    if api_id and api_id != "all":
+        if await _accept(api_id):
+            return api_id
+        try:
+            doc = await db["apis"].find_one({"_id": ObjectId(api_id)}, {"name": 1})
+            if doc and doc.get("name"):
+                name = doc["name"]
+                if name in live or await db["apis"].find_one({"name": name}, {"_id": 1}):
+                    return name
+        except Exception:
+            pass
+        doc = await db["apis"].find_one({"name": api_id}, {"name": 1})
+        if doc and doc.get("name"):
+            return doc["name"]
+    return None
 
 
 async def _resolve_api_name(
@@ -879,7 +921,7 @@ async def get_api_usage_stats(
     if not db_manager.response_db_ready:
         return empty
 
-    api_name = await _resolve_api_name(db, api_id, response_db=response_db)
+    api_name = await _resolve_dashboard_api_name(db, api_id, response_db=response_db)
     if not api_name:
         raise ValueError("API not found")
 

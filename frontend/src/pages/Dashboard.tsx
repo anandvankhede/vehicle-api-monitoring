@@ -80,7 +80,7 @@ export const Dashboard: React.FC = () => {
         setSelectedApiId('');
         setApisLoadError(
           clientId === 'all'
-            ? 'No catalog APIs found. Create APIs in API Management first.'
+            ? 'No response_db APIs found. Ensure result_* collections exist on the response database.'
             : 'No APIs are assigned to this client. Configure API access in Client Management.'
         );
       }

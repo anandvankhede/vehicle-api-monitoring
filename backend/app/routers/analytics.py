@@ -21,7 +21,7 @@ from app.database import get_database, get_response_database
 from app.dependencies.auth import get_current_admin
 from app.schemas.common import ErrorResponse
 from app.services import analytics_service as analytics
-from app.services.api_collections import is_registered_api_name
+from app.services.api_collections import is_live_response_db_api, is_registered_api_name
 
 router = APIRouter(prefix="/analytics", tags=["Dashboard Analytics"])
 
@@ -53,7 +53,10 @@ async def _resolve_scope(db, response_db, client_id: str, api_name: str):
     mapping is None (aggregate across all clients).
     """
     if api_name != "all":
-        if not await is_registered_api_name(db, api_name):
+        known = await is_live_response_db_api(api_name, response_db)
+        if not known:
+            known = await is_registered_api_name(db, api_name)
+        if not known:
             raise HTTPException(status_code=400, detail="Unknown api_name.")
     if client_id in ("all", None, ""):
         return None, api_name

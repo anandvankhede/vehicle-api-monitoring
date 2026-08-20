@@ -113,7 +113,7 @@ async def get_dashboard_users(
     responses={401: {"model": ErrorResponse}},
 )
 async def get_dashboard_apis(
-    client_id: str = Query("all", description="Client ID; 'all' for all catalog APIs"),
+    client_id: str = Query("all", description="Client ID; 'all' for all response_db APIs"),
     db=Depends(get_database),
     response_db=Depends(get_response_database),
     _=Depends(get_current_admin),
@@ -121,8 +121,8 @@ async def get_dashboard_apis(
     """
     Return APIs for the monitoring dropdown.
 
-    - all: every active catalog API
-    - client: assigned catalog APIs for that client
+    - all: every API with a live response_db collection
+    - client: catalog-assigned APIs for that client
     """
     return await dashboard_service.get_api_options(
         db, client_id=client_id, response_db=response_db,
