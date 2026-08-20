@@ -47,7 +47,7 @@ export const ClientAuthProvider: React.FC<{ children: React.ReactNode }> = ({ ch
     const token = getTokenForPortal('client');
     if (token) {
       if (isTokenExpired('client')) {
-        handleAuthError();
+        handleAuthError('client');
         setIsLoading(false);
         return;
       }
@@ -91,6 +91,17 @@ export const ClientAuthProvider: React.FC<{ children: React.ReactNode }> = ({ ch
     } else {
       setIsLoading(false);
     }
+  }, []);
+
+  useEffect(() => {
+    const onSessionExpired = (event: Event) => {
+      const detail = (event as CustomEvent<{ portal?: string }>).detail;
+      if (!detail?.portal || detail.portal === 'client') {
+        setClient(null);
+      }
+    };
+    window.addEventListener('auth-session-expired', onSessionExpired);
+    return () => window.removeEventListener('auth-session-expired', onSessionExpired);
   }, []);
 
   const login = useCallback(async (username: string, password: string): Promise<{ success: boolean; error?: string }> => {

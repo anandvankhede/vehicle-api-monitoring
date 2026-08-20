@@ -23,6 +23,8 @@ import {
 import { TimeFilter } from '../components/TimeFilter';
 import { clientAnalyticsService } from '../services/clientAnalyticsService';
 import { dashboardService } from '../services/dashboardService';
+import { usePolling } from '../hooks/usePolling';
+import { ENV } from '../config/env';
 import type { UserOption } from '../types/dashboard';
 import type { ClientActivityRecord, ClientAnalyticsData } from '../types/clientAnalytics';
 
@@ -61,6 +63,7 @@ export const ClientAnalytics: React.FC = () => {
   const [endDate, setEndDate] = useState('');
   const [statusFilter, setStatusFilter] = useState('all');
   const [searchQuery, setSearchQuery] = useState('');
+  const [debouncedSearch, setDebouncedSearch] = useState('');
   const [sortBy, setSortBy] = useState<SortField>('totalHits');
   const [sortOrder, setSortOrder] = useState<'asc' | 'desc'>('desc');
   const [page, setPage] = useState(1);
@@ -73,6 +76,16 @@ export const ClientAnalytics: React.FC = () => {
   const searchTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   useEffect(() => {
+    if (searchTimeoutRef.current) clearTimeout(searchTimeoutRef.current);
+    searchTimeoutRef.current = setTimeout(() => {
+      setDebouncedSearch(searchQuery);
+    }, 400);
+    return () => {
+      if (searchTimeoutRef.current) clearTimeout(searchTimeoutRef.current);
+    };
+  }, [searchQuery]);
+
+  useEffect(() => {
     dashboardService.getUsers().then(setUsers).catch(() => {});
   }, []);
 
@@ -81,16 +94,16 @@ export const ClientAnalytics: React.FC = () => {
     setSelectedApiId('all');
   }, [selectedClientId]);
 
-  const loadData = useCallback(async () => {
+  const loadData = useCallback(async (silent = false) => {
     try {
-      setIsLoading(true);
+      if (!silent) setIsLoading(true);
       setError(null);
       const result = await clientAnalyticsService.getClientAnalyticsData(
         selectedClientId,
         selectedApiId,
         timeFilter,
         statusFilter,
-        searchQuery,
+        debouncedSearch,
         sortBy,
         sortOrder,
         startDate,
@@ -103,18 +116,20 @@ export const ClientAnalytics: React.FC = () => {
     } finally {
       setIsLoading(false);
     }
-  }, [selectedClientId, selectedApiId, timeFilter, statusFilter, searchQuery, sortBy, sortOrder, startDate, endDate]);
+  }, [selectedClientId, selectedApiId, timeFilter, statusFilter, debouncedSearch, sortBy, sortOrder, startDate, endDate]);
 
   useEffect(() => {
-    loadData();
+    loadData(false);
   }, [loadData]);
+
+  usePolling(
+    () => loadData(true),
+    ENV.DASHBOARD_POLL_MS,
+    !(timeFilter === 'custom' && (!startDate || !endDate))
+  );
 
   const handleSearchChange = (value: string) => {
     setSearchQuery(value);
-    if (searchTimeoutRef.current) clearTimeout(searchTimeoutRef.current);
-    searchTimeoutRef.current = setTimeout(() => {
-      loadData();
-    }, 400);
   };
 
   const handleSort = (field: SortField) => {
@@ -134,6 +149,7 @@ export const ClientAnalytics: React.FC = () => {
     setEndDate('');
     setStatusFilter('all');
     setSearchQuery('');
+    setDebouncedSearch('');
     setSortBy('totalHits');
     setSortOrder('desc');
     setPage(1);
@@ -215,7 +231,7 @@ export const ClientAnalytics: React.FC = () => {
             style={{ backgroundColor: 'rgba(239, 68, 68, 0.1)', border: '1px solid rgba(239, 68, 68, 0.2)' }}>
             <span className="text-xs" style={{ color: 'var(--error)' }}>{error}</span>
             <button
-              onClick={loadData}
+              onClick={() => loadData(false)}
               className="px-2.5 py-1 rounded-md text-[11px] font-semibold"
               style={{ backgroundColor: 'rgba(239, 68, 68, 0.2)', color: 'var(--error)' }}
             >
@@ -387,7 +403,7 @@ export const ClientAnalytics: React.FC = () => {
                 <input
                   type="text"
                   placeholder="Search client, API..."
-                  defaultValue={searchQuery}
+                  value={searchQuery}
                   onChange={(e) => handleSearchChange(e.target.value)}
                   className="w-full text-xs rounded-lg pl-8 pr-3 py-2 focus:outline-none focus:ring-1 transition-all"
                   style={{
@@ -418,7 +434,7 @@ export const ClientAnalytics: React.FC = () => {
                   Reset
                 </button>
                 <button
-                  onClick={loadData}
+                  onClick={() => loadData(false)}
                   disabled={isLoading}
                   className="p-2 rounded-lg border transition-colors"
                   style={{ backgroundColor: 'var(--card-inner)', color: 'var(--text-muted)', borderColor: 'var(--border)' }}

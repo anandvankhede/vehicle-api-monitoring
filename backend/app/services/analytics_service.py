@@ -141,6 +141,23 @@ async def resolve_api_names_for_scope(
     return scope["api_names"]
 
 
+async def _resolve_client_mapping(db, client_id: str):
+    """Return user_mapping for a client, syncing from source collections if needed."""
+    mapping = await get_user_mapping_by_client_id(db, client_id)
+    if mapping:
+        return mapping
+    try:
+        oid = ObjectId(client_id)
+    except Exception:
+        return None
+    client = await db["clients"].find_one({"_id": oid})
+    if not client:
+        return None
+    from app.services.user_mapping_service import sync_user_mapping
+    await sync_user_mapping(db, oid)
+    return await get_user_mapping_by_client_id(db, client_id)
+
+
 async def resolve_query_scope(
     db, client_id: str = "all", response_db=None,
 ) -> Dict[str, Any]:
@@ -165,7 +182,7 @@ async def resolve_query_scope(
             "client_id": "all",
         }
 
-    mapping = await get_user_mapping_by_client_id(db, client_id)
+    mapping = await _resolve_client_mapping(db, client_id)
     if not mapping:
         return {
             "api_names": [],
@@ -180,9 +197,10 @@ async def resolve_query_scope(
         n for n in (mapping.get("apis") or [])
         if n in catalog_names and is_catalog_api_name(n)
     ]
+    access_key = mapping.get("access_key") or None
     return {
         "api_names": sorted(assigned),
-        "key_scope": mapping.get("access_key"),
+        "key_scope": access_key,
         "client_name": (client or {}).get(
             "company_name", mapping.get("company_name", "Unknown")
         ),
@@ -927,13 +945,13 @@ async def get_api_usage_stats(
 
     key_scope = None
     if client_id not in ("all", None, ""):
-        mapping = await get_user_mapping_by_client_id(db, client_id)
+        mapping = await _resolve_client_mapping(db, client_id)
         if not mapping:
             raise ValueError("Client not found")
         assigned = mapping.get("apis") or []
         if api_name not in assigned:
             raise ValueError("API not assigned to this client")
-        key_scope = mapping.get("access_key")
+        key_scope = mapping.get("access_key") or None
 
     coll = get_response_collection_for_api(api_name)
     if not coll:
@@ -1049,6 +1067,7 @@ async def get_api_usage_stats(
 async def get_client_details_stats(
     response_db, db, client_id: str = "all", time_filter: str = "last_7_days",
     start_date: Optional[str] = None, end_date: Optional[str] = None,
+    api_id: Optional[str] = None,
 ) -> Dict[str, Any]:
     """
     Detailed chart data: one per-API trend series (+ KPI totals) for the selected
@@ -1082,7 +1101,14 @@ async def get_client_details_stats(
     key_scope = scope["key_scope"]
     client_name = scope["client_name"]
 
-    if client_id not in ("all", None, "") and not names:
+    if api_id and api_id not in ("all", None, ""):
+        resolved_api = await _resolve_api_name(db, api_id, response_db=response_db)
+        if resolved_api and resolved_api in names:
+            names = [resolved_api]
+        else:
+            names = []
+
+    if client_id not in ("all", None, "") and client_name == "Unknown":
         raise ValueError("Client not found")
 
     async def _query(name: str) -> Dict[str, Any]:
@@ -1196,6 +1222,52 @@ _CLIENT_ANALYTICS_SORT_MAP = {
 }
 
 
+async def _analytics_mappings_for_scope(db, client_id: str) -> List[dict]:
+    """Resolve user_mapping rows for client analytics, syncing from source when needed."""
+    if client_id not in ("all", None, ""):
+        mapping = await _resolve_client_mapping(db, client_id)
+        return [mapping] if mapping else []
+
+    clients = await db["clients"].find({"status": "Active"}).to_list(length=None)
+    mappings: List[dict] = []
+    for client in clients:
+        mapping = await _resolve_client_mapping(db, str(client["_id"]))
+        if mapping:
+            mappings.append(mapping)
+    return mappings
+
+
+def _zero_analytics_rows(
+    mapping: dict, names: List[str], name_to_api: Dict[str, dict],
+) -> List[dict]:
+    """Placeholder rows when a client has assigned APIs but no access key yet."""
+    cid = mapping.get("client_id")
+    client_name = mapping.get("company_name", "Unknown")
+    client_code = str(mapping.get("username", "")).upper().replace("_", "-")
+    now = datetime.now(timezone.utc)
+    rows = []
+    for name in names:
+        api_doc = name_to_api.get(name, {})
+        rows.append({
+            "id": f"{cid}_{name}",
+            "client_id": str(cid) if cid else "",
+            "client_name": client_name,
+            "client_code": client_code,
+            "api_id": str(api_doc.get("_id") or name),
+            "api_name": name,
+            "api_category": api_doc.get("category", "vehicle"),
+            "total_hits": 0,
+            "success": 0,
+            "failed": 0,
+            "not_found": 0,
+            "avg_response_time_ms": 0,
+            "success_rate": 0,
+            "timestamp": now.isoformat(),
+            "date": now.strftime("%Y-%m-%d"),
+        })
+    return rows
+
+
 async def get_client_analytics_stats(
     response_db, db, client_id: str = "all", api_id: str = "all",
     time_filter: str = "today", status_filter: str = "all",
@@ -1216,13 +1288,7 @@ async def get_client_analytics_stats(
     name_to_api = {d.get("name"): d for d in api_docs if d.get("name")}
 
     # Scope: which clients (and which api names per client) to query.
-    if client_id in ("all", None, ""):
-        # All clients: aggregate each active user_mapping row (per-client view).
-        mappings = await db["user_mapping"].find(
-            {"status": "Active"}).to_list(length=None)
-    else:
-        mapping = await get_user_mapping_by_client_id(db, client_id)
-        mappings = [mapping] if mapping else []
+    mappings = await _analytics_mappings_for_scope(db, client_id)
 
     async def _counts_for_client(mapping: dict, names: List[str]) -> List[dict]:
         access_key = mapping.get("access_key")
@@ -1307,12 +1373,11 @@ async def get_client_analytics_stats(
     # Build per (client, api) rows for the resolved scope.
     records: List[dict] = []
     catalog_names = set(await get_catalog_api_names(db))
+    work_items: List[tuple] = []
     for mapping in mappings:
         if not isinstance(mapping, dict):
             continue
         assigned = mapping.get("apis") or []
-        if not mapping.get("access_key"):
-            continue
         if api_name_filter:
             names = [api_name_filter] if api_name_filter in assigned else []
         else:
@@ -1320,7 +1385,17 @@ async def get_client_analytics_stats(
         names = [n for n in names if n in catalog_names]
         if not names:
             continue
-        records.extend(await _counts_for_client(mapping, names))
+        if not mapping.get("access_key"):
+            records.extend(_zero_analytics_rows(mapping, names, name_to_api))
+        else:
+            work_items.append((mapping, names))
+
+    if work_items:
+        batches = await asyncio.gather(
+            *[_counts_for_client(mapping, names) for mapping, names in work_items]
+        )
+        for batch in batches:
+            records.extend(batch)
 
     # Free-text search across client name/code and API name.
     if search_query:
@@ -1551,20 +1626,27 @@ async def get_dashboard_users(db) -> List[dict]:
     """
     Return client options for the dashboard user filter.
 
-    Each entry: { client_id, username, company_name, apis: [...] }.
-    Uses user_mapping (read-optimized).
+    Includes every active client, even when API access is not assigned yet.
     """
-    cursor = db["user_mapping"].find({"status": "Active"})
-    mappings = await cursor.to_list(length=None)
-    result = []
-    for m in mappings:
-        result.append({
-            "client_id": str(m.get("client_id") or ""),
-            "username": m.get("username", ""),
-            "company_name": m.get("company_name", ""),
-            "apis": m.get("apis", []),
-        })
-    return result
+    from app.services.dashboard_service import DashboardService
+    service = DashboardService()
+    options = await service.get_user_options(db)
+
+    mapping_by_client = {}
+    async for m in db["user_mapping"].find({"status": "Active"}):
+        cid = m.get("client_id")
+        if cid is not None:
+            mapping_by_client[str(cid)] = m
+
+    return [
+        {
+            "client_id": opt["id"],
+            "username": opt.get("code", ""),
+            "company_name": opt["name"],
+            "apis": (mapping_by_client.get(opt["id"]) or {}).get("apis") or [],
+        }
+        for opt in options
+    ]
 
 
 async def get_dashboard_apis(

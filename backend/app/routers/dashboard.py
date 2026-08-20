@@ -49,6 +49,7 @@ async def get_dashboard_stats(
         "healthyApisCount": result["healthy_apis_count"],
         "degradedApisCount": result["degraded_apis_count"],
         "responseDbAvailable": db_manager.response_db_ready,
+        "responseDbDegraded": db_manager.response_db_degraded,
     }
 
 
@@ -355,6 +356,7 @@ async def get_client_details(
     time_filter: str = Query("last_7_days"),
     start_date: Optional[str] = Query(None),
     end_date: Optional[str] = Query(None),
+    api_id: Optional[str] = Query(None, description="Optional API id/name to return a single series"),
     db=Depends(get_database),
     response_db=Depends(get_response_database),
     _=Depends(get_current_admin),
@@ -365,11 +367,57 @@ async def get_client_details(
 
     Query params:
         - client_id:   "all" or a specific client ID
+        - api_id:      Optional — return only this API's trend series
         - time_filter: last_30_min | last_1_hour | last_2_hours | ... | today | yesterday | last_7_days | last_month | custom
     """
     try:
         return await analytics.get_client_details_stats(
-            response_db, db, client_id, time_filter, start_date, end_date)
+            response_db, db, client_id, time_filter, start_date, end_date,
+            api_id=api_id,
+        )
+    except ValueError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.get(
+    "/api-trend",
+    responses={401: {"model": ErrorResponse}},
+)
+async def get_api_trend(
+    api_id: str = Query(..., description="API id or catalog name"),
+    client_id: str = Query("all"),
+    time_filter: str = Query("last_7_days"),
+    start_date: Optional[str] = Query(None),
+    end_date: Optional[str] = Query(None),
+    db=Depends(get_database),
+    response_db=Depends(get_response_database),
+    _=Depends(get_current_admin),
+):
+    """Lightweight single-API trend payload for graph modals."""
+    try:
+        result = await analytics.get_client_details_stats(
+            response_db, db, client_id, time_filter, start_date, end_date,
+            api_id=api_id,
+        )
+        apis = result.get("apis") or []
+        if apis:
+            return apis[0]
+        api_name = await analytics._resolve_api_name(db, api_id, response_db=response_db)
+        return {
+            "apiId": api_id,
+            "apiName": api_name or api_id,
+            "category": "vehicle",
+            "totalHits": 0,
+            "success": 0,
+            "failed": 0,
+            "notFound": 0,
+            "avgResponseTimeMs": 0,
+            "trendData": [],
+        }
     except ValueError as e:
         raise HTTPException(status_code=404, detail=str(e))
     except HTTPException:

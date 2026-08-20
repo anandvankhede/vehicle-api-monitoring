@@ -1,12 +1,14 @@
-import React, { useState, useEffect, useMemo } from 'react';
+import React, { useState, useEffect, useMemo, useCallback } from 'react';
 import { useNavigate } from 'react-router-dom';
 import {
   CheckCircle, Clock, Search, X, Eye, ArrowRight,
-  Activity as ActivityIcon, FileText, Hourglass, CheckCheck, Key, Gauge, Copy,
+  Activity as ActivityIcon, FileText, Hourglass, CheckCheck, Key, Gauge, Copy, RefreshCw,
 } from 'lucide-react';
 import { useClientAuth } from '../context/ClientAuthContext';
 import clientService from '../services/clientService';
 import { SummaryCard } from '../components/SummaryCard';
+import { usePolling } from '../hooks/usePolling';
+import { ENV } from '../config/env';
 import type { ApiRequest, ApiRequestStatus, ClientApiAccess } from '../types/client';
 
 type FilterType = 'All' | 'Pending Approval' | 'Approved';
@@ -29,9 +31,9 @@ export const ClientActivity: React.FC = () => {
     }
   }, [isAuthenticated, navigate]);
 
-  const loadData = async () => {
+  const loadData = useCallback(async (silent = false) => {
     if (!client) return;
-    setIsLoading(true);
+    if (!silent) setIsLoading(true);
     setLoadError('');
     try {
       const [requestsData, accessData] = await Promise.all([
@@ -47,14 +49,15 @@ export const ClientActivity: React.FC = () => {
     } catch {
       setLoadError('Failed to load activity data. Please try again.');
     } finally {
-      setIsLoading(false);
+      if (!silent) setIsLoading(false);
     }
-  };
+  }, [client]);
 
   useEffect(() => {
-    loadData();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [client]);
+    loadData(false);
+  }, [loadData]);
+
+  usePolling(() => loadData(true), ENV.ACTIVITY_POLL_MS, Boolean(client));
 
   // Summary counts derived from requests
   const summary = useMemo(() => {
@@ -188,6 +191,16 @@ export const ClientActivity: React.FC = () => {
               </button>
             ))}
           </div>
+          <button
+            type="button"
+            onClick={() => loadData(false)}
+            disabled={isLoading}
+            className="p-2.5 rounded-lg border transition-colors"
+            style={{ backgroundColor: 'var(--card-inner)', color: 'var(--text-secondary)', borderColor: 'var(--border)' }}
+            title="Refresh"
+          >
+            <RefreshCw className={`w-4 h-4 ${isLoading ? 'animate-spin' : ''}`} />
+          </button>
         </div>
       </div>
 

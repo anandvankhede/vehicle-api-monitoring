@@ -10,12 +10,16 @@ All monitoring reads should go through these helpers so we:
 from __future__ import annotations
 
 import asyncio
+import logging
 from contextlib import asynccontextmanager
 from typing import Any, Dict, List, Optional
 
 from app.config import settings
 
+logger = logging.getLogger(__name__)
+
 _semaphore: Optional[asyncio.Semaphore] = None
+_query_failure_count = 0
 
 
 def _query_semaphore() -> asyncio.Semaphore:
@@ -39,6 +43,37 @@ def aggregate_kwargs() -> Dict[str, Any]:
     return opts
 
 
+def mark_response_db_failure(collection_name: str, exc: Exception) -> None:
+    """Record a failed response_db read for health/degraded reporting."""
+    global _query_failure_count
+    _query_failure_count += 1
+    logger.warning(
+        "response_db query failed on %s: %s",
+        collection_name,
+        exc,
+        exc_info=True,
+    )
+    try:
+        from app.database import db_manager
+        db_manager.response_db_degraded = True
+    except Exception:
+        pass
+
+
+def response_db_failure_count() -> int:
+    return _query_failure_count
+
+
+def reset_response_db_health_flags() -> None:
+    global _query_failure_count
+    _query_failure_count = 0
+    try:
+        from app.database import db_manager
+        db_manager.response_db_degraded = False
+    except Exception:
+        pass
+
+
 @asynccontextmanager
 async def response_db_read_slot():
     """Limit how many response_db queries run at the same time."""
@@ -52,7 +87,8 @@ async def response_db_aggregate(collection, pipeline: list) -> List[dict]:
         try:
             cursor = collection.aggregate(pipeline, **aggregate_kwargs())
             return await cursor.to_list(length=None)
-        except Exception:
+        except Exception as exc:
+            mark_response_db_failure(getattr(collection, "name", "unknown"), exc)
             return []
 
 
@@ -64,7 +100,8 @@ async def response_db_count_documents(collection, match: dict) -> int:
             if ms:
                 kwargs["maxTimeMS"] = ms
             return await collection.count_documents(match, **kwargs)
-        except Exception:
+        except Exception as exc:
+            mark_response_db_failure(getattr(collection, "name", "unknown"), exc)
             return 0
 
 
@@ -92,5 +129,6 @@ async def response_db_find_to_list(
                 cursor = cursor.max_time_ms(ms)
             cursor = cursor.batch_size(batch_size)
             return await cursor.to_list(length=limit)
-        except Exception:
+        except Exception as exc:
+            mark_response_db_failure(getattr(collection, "name", "unknown"), exc)
             return []

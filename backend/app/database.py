@@ -83,6 +83,7 @@ class Database:
     client: Optional[AsyncIOMotorClient] = None
     response_client: Optional[AsyncIOMotorClient] = None
     response_db_ready: bool = False
+    response_db_degraded: bool = False
 
     def connect(self) -> AsyncIOMotorClient:
         """

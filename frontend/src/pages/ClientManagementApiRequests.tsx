@@ -1,10 +1,12 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import {
   Search, Clock, CheckCircle, XCircle, Eye, X,
   Key, Activity, Building2, Mail, Phone,
   RefreshCw, DollarSign, Gauge, ShieldCheck
 } from 'lucide-react';
 import clientService from '../services/clientService';
+import { usePolling } from '../hooks/usePolling';
+import { ENV } from '../config/env';
 import type { ApiRequest, Currency, RequestLimitFrequency } from '../types/client';
 
 export const ClientManagementApiRequests: React.FC = () => {
@@ -30,9 +32,8 @@ export const ClientManagementApiRequests: React.FC = () => {
   const currencies: Currency[] = ['INR'];
   const frequencyOptions: RequestLimitFrequency[] = ['Per Minute', 'Per Hour', 'Per Day', 'Per Month', 'Per Year'];
 
-  const loadRequests = async () => {
-    setIsLoading(true);
-    // Load all data from the backend into the sync cache
+  const loadRequests = useCallback(async (silent = false) => {
+    if (!silent) setIsLoading(true);
     await clientService.loadAllData();
     setRequests(clientService.getAllApiRequests());
     const clientMap: Record<string, string> = {};
@@ -40,18 +41,14 @@ export const ClientManagementApiRequests: React.FC = () => {
       clientMap[c.id] = c.company_name || c.username;
     });
     setClients(clientMap);
-    setIsLoading(false);
-  };
-
-  useEffect(() => {
-    loadRequests();
+    if (!silent) setIsLoading(false);
   }, []);
 
-  // Auto-refresh every 15 seconds so new client requests appear automatically
   useEffect(() => {
-    const interval = setInterval(loadRequests, 15000);
-    return () => clearInterval(interval);
-  }, []);
+    loadRequests(false);
+  }, [loadRequests]);
+
+  usePolling(() => loadRequests(true), ENV.ACTIVITY_POLL_MS, true);
 
   useEffect(() => {
     if (!toast) return;

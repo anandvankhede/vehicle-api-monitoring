@@ -58,6 +58,7 @@ export interface ApiInfo {
   name: string;
   description: string;
   category?: string;
+  is_active?: boolean;
 }
 
 export interface ApiRequest {

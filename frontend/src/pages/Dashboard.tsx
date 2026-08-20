@@ -334,6 +334,7 @@ export const Dashboard: React.FC = () => {
           responseDbAvailable={summary?.responseDbAvailable}
           apisLoadError={apisLoadError}
           onReloadApis={() => loadAvailableApis(selectedUserId)}
+          clientId={selectedUserId}
         />
       </div>
     </div>

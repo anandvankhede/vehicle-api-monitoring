@@ -126,6 +126,9 @@ export function handleAuthError(portal?: PortalType): void {
   if (activePortal) {
     clearPortalToken(activePortal);
   }
+  window.dispatchEvent(
+    new CustomEvent('auth-session-expired', { detail: { portal: activePortal } })
+  );
 }
 
 /**
@@ -501,13 +504,35 @@ export const api = {
     if (params.endDate) searchParams.set('end_date', params.endDate);
     return httpGet(`/dashboard/client-analytics/export?${searchParams.toString()}`);
   },
-  getClientDetails: (clientId: string = 'all', timeFilter: string = 'last_7_days', startDate?: string, endDate?: string) => {
+  getClientDetails: (
+    clientId: string = 'all',
+    timeFilter: string = 'last_7_days',
+    startDate?: string,
+    endDate?: string,
+    apiId?: string,
+  ) => {
     const searchParams = new URLSearchParams();
     searchParams.set('client_id', clientId);
     searchParams.set('time_filter', timeFilter);
     if (startDate) searchParams.set('start_date', startDate);
     if (endDate) searchParams.set('end_date', endDate);
+    if (apiId) searchParams.set('api_id', apiId);
     return httpGet(`/dashboard/client-details?${searchParams.toString()}`);
+  },
+  getApiTrend: (
+    apiId: string,
+    clientId: string = 'all',
+    timeFilter: string = 'last_7_days',
+    startDate?: string,
+    endDate?: string,
+  ) => {
+    const searchParams = new URLSearchParams();
+    searchParams.set('api_id', apiId);
+    searchParams.set('client_id', clientId);
+    searchParams.set('time_filter', timeFilter);
+    if (startDate) searchParams.set('start_date', startDate);
+    if (endDate) searchParams.set('end_date', endDate);
+    return httpGet(`/dashboard/api-trend?${searchParams.toString()}`);
   },
 
   // Reports
@@ -525,10 +550,18 @@ export const api = {
     if (endDate) searchParams.set('end_date', endDate);
     return httpGet(`/reports/client-usage?${searchParams.toString()}`, portal);
   },
-  getBillingReport: (clientId?: string, month?: string, portal?: PortalType) => {
+  getBillingReport: (
+    clientId?: string,
+    month?: string,
+    portal?: PortalType,
+    startDate?: string,
+    endDate?: string,
+  ) => {
     const searchParams = new URLSearchParams();
     if (clientId) searchParams.set('client_id', clientId);
     if (month) searchParams.set('month', month);
+    if (startDate) searchParams.set('start_date', startDate);
+    if (endDate) searchParams.set('end_date', endDate);
     return httpGet(`/reports/billing?${searchParams.toString()}`, portal);
   },
   getApiStats: (apiName?: string, timeFilter: string = '7d') => {

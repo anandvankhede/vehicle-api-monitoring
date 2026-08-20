@@ -1,17 +1,26 @@
 // Environment configuration
-const parsedPollMs = Number(import.meta.env.VITE_DASHBOARD_POLL_MS);
+function parsePollMs(raw: string | undefined, fallback: number): number {
+  const parsed = Number(raw);
+  return Number.isFinite(parsed) && parsed >= 5000 ? parsed : fallback;
+}
+
+const parsedDashboardPollMs = Number(import.meta.env.VITE_DASHBOARD_POLL_MS);
 
 export const ENV = {
   IS_DEVELOPMENT: import.meta.env.DEV,
   IS_PRODUCTION: import.meta.env.PROD,
   API_BASE_URL: import.meta.env.VITE_API_BASE_URL,
-  /** Dashboard auto-refresh interval (ms). Slower in production to reduce response_db load. */
+  /** Background page auto-refresh (Dashboard, Detailed Chart). Slower in prod to reduce response_db load. */
   DASHBOARD_POLL_MS:
-    Number.isFinite(parsedPollMs) && parsedPollMs >= 5000
-      ? parsedPollMs
+    Number.isFinite(parsedDashboardPollMs) && parsedDashboardPollMs >= 5000
+      ? parsedDashboardPollMs
       : import.meta.env.PROD
         ? 30_000
-        : 10_000,
+        : 15_000,
+  /** Graph popup live refresh while modal is open. */
+  GRAPH_MODAL_POLL_MS: parsePollMs(import.meta.env.VITE_GRAPH_MODAL_POLL_MS, 5_000),
+  /** Client Activity and admin API Requests list refresh. */
+  ACTIVITY_POLL_MS: parsePollMs(import.meta.env.VITE_ACTIVITY_POLL_MS, 15_000),
 } as const;
 
 // LocalStorage keys (centralized)

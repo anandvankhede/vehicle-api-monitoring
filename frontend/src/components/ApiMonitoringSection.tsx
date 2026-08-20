@@ -28,6 +28,7 @@ interface ApiMonitoringSectionProps {
   responseDbAvailable?: boolean;
   apisLoadError?: string | null;
   onReloadApis?: () => void;
+  clientId?: string;
 }
 
 const MAIN_API_TIME_OPTIONS: TimeOption[] = [
@@ -61,6 +62,7 @@ export const ApiMonitoringSection: React.FC<ApiMonitoringSectionProps> = ({
   responseDbAvailable,
   apisLoadError,
   onReloadApis,
+  clientId = 'all',
 }) => {
   const statsMatchSelection =
     monitoringStats != null &&
@@ -211,7 +213,6 @@ export const ApiMonitoringSection: React.FC<ApiMonitoringSectionProps> = ({
             {/* Right Column: Line Chart (8 Cols on LG) */}
             <div className="lg:col-span-8">
               <LineChartCard
-                key={`line-${chartKey}`}
                 chartKey={chartKey}
                 data={chartTrendData}
                 totalHits={activeStats?.totalHits}
@@ -227,6 +228,7 @@ export const ApiMonitoringSection: React.FC<ApiMonitoringSectionProps> = ({
                 endDate={endDate}
                 onDateChange={onDateChange}
                 onModalOpenChange={onTrendModalOpenChange}
+                clientId={clientId}
               />
             </div>
           </div>

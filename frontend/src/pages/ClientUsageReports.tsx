@@ -52,6 +52,18 @@ function toBackendDateRange(filters: UsageReportFilters): {
   }
 }
 
+function billingMonthFromFilters(filters: UsageReportFilters): string {
+  if (filters.dateRange === 'custom' && filters.startDate) {
+    return filters.startDate.slice(0, 7);
+  }
+  if (filters.dateRange === 'lastMonth') {
+    const now = new Date();
+    const prev = new Date(now.getFullYear(), now.getMonth() - 1, 1);
+    return `${prev.getFullYear()}-${String(prev.getMonth() + 1).padStart(2, '0')}`;
+  }
+  return new Date().toISOString().slice(0, 7);
+}
+
 function mapBillingReport(data: {
   month: string;
   year: number;
@@ -104,7 +116,6 @@ export const ClientUsageReports: React.FC = () => {
 
   const [filters, setFilters] = useState<UsageReportFilters>({
     dateRange: 'last30days',
-    status: 'all',
     startDate: '',
     endDate: '',
   });
@@ -120,9 +131,10 @@ export const ClientUsageReports: React.FC = () => {
     setError('');
     try {
       const { dateRange, startDate, endDate } = toBackendDateRange(filters);
+      const billingMonth = billingMonthFromFilters(filters);
       const [usageResult, billingResult] = await Promise.all([
         api.getClientUsageReport(client.id, dateRange, startDate, endDate, 'client'),
-        api.getBillingReport(client.id, undefined, 'client'),
+        api.getBillingReport(client.id, billingMonth, 'client', startDate, endDate),
       ]);
       setDailyReport((usageResult as { data: DailyUsageReport[] }).data || []);
       setMonthlyReport(mapBillingReport(billingResult as Parameters<typeof mapBillingReport>[0]));

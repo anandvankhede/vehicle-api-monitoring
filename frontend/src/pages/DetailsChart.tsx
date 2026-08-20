@@ -144,7 +144,7 @@ export const DetailsChart: React.FC = () => {
           </span>
           <span style={{ color: 'var(--text-muted)' }}> — </span>
           <span style={{ color: 'var(--text-secondary)' }}>
-            {activeDetails.apis.length} APIs · Filter: {timeFilter.replace(/_/g, ' ')} · Auto-refresh 5s
+            {activeDetails.apis.length} APIs · Filter: {timeFilter.replace(/_/g, ' ')} · Auto-refresh {ENV.DASHBOARD_POLL_MS / 1000}s
           </span>
         </div>
       )}

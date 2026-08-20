@@ -1,6 +1,6 @@
 import React, { useEffect, useCallback, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
-import { X, TrendingUp, Server, Loader2 } from 'lucide-react';
+import { X, TrendingUp, Server, Loader2, RefreshCw } from 'lucide-react';
 import { TimeFilter } from './TimeFilter';
 import type { TimeOption } from './TimeFilter';
 import { TrendLineChart, TREND_CHART_QUICK_RANGES, computeTrendSummary } from './TrendLineChart';
@@ -31,6 +31,7 @@ interface LineChartModalProps {
   initialStats?: Pick<ApiMonitoringStats, 'totalHits' | 'successRate'> | null;
   apis: ApiOption[];
   selectedApiId: string;
+  clientId?: string;
   onApiChange: (apiId: string) => void;
   selectedTimeFilter: ApiTimeFilterValue;
   onTimeFilterChange: (filter: ApiTimeFilterValue) => void;
@@ -46,6 +47,7 @@ export const LineChartModal: React.FC<LineChartModalProps> = ({
   initialStats = null,
   apis,
   selectedApiId,
+  clientId = 'all',
   onApiChange,
   selectedTimeFilter,
   onTimeFilterChange,
@@ -58,19 +60,38 @@ export const LineChartModal: React.FC<LineChartModalProps> = ({
   const [isLoading, setIsLoading] = useState(false);
   const requestRef = useRef(0);
 
+  // Local filter state — avoids closing the modal when parent re-renders on filter change.
+  const [modalApiId, setModalApiId] = useState(selectedApiId);
+  const [modalTimeFilter, setModalTimeFilter] = useState(selectedTimeFilter);
+  const [modalStartDate, setModalStartDate] = useState(startDate);
+  const [modalEndDate, setModalEndDate] = useState(endDate);
+
+  useEffect(() => {
+    if (!open) return;
+    setModalApiId(selectedApiId);
+    setModalTimeFilter(selectedTimeFilter);
+    setModalStartDate(startDate);
+    setModalEndDate(endDate);
+    setTrendData(initialData);
+    if (initialStats) {
+      setSummary({ totalHits: initialStats.totalHits, successRate: initialStats.successRate });
+    }
+  }, [open]); // eslint-disable-line react-hooks/exhaustive-deps -- seed only when modal opens
+
   const fetchModalData = useCallback(async (silent = true) => {
-    if (!selectedApiId) return;
-    if (selectedTimeFilter === 'custom' && (!startDate || !endDate)) return;
+    if (!modalApiId) return;
+    if (modalTimeFilter === 'custom' && (!modalStartDate || !modalEndDate)) return;
 
     const requestId = ++requestRef.current;
     if (!silent) setIsLoading(true);
 
     try {
       const stats = await dashboardService.getApiMonitoringStats(
-        selectedApiId,
-        selectedTimeFilter,
-        startDate,
-        endDate
+        modalApiId,
+        modalTimeFilter,
+        modalStartDate,
+        modalEndDate,
+        clientId
       );
       if (requestId !== requestRef.current) return;
       setTrendData(stats.trendData);
@@ -84,22 +105,45 @@ export const LineChartModal: React.FC<LineChartModalProps> = ({
         setIsLoading(false);
       }
     }
-  }, [selectedApiId, selectedTimeFilter, startDate, endDate]);
+  }, [modalApiId, modalTimeFilter, modalStartDate, modalEndDate, clientId]);
 
   useEffect(() => {
     if (!open) return;
-    setTrendData(initialData);
-    if (initialStats) {
-      setSummary({ totalHits: initialStats.totalHits, successRate: initialStats.successRate });
-    }
     fetchModalData(false);
-  }, [open, selectedApiId, selectedTimeFilter, startDate, endDate]);
+  }, [open, modalApiId, modalTimeFilter, modalStartDate, modalEndDate, fetchModalData]);
 
-  usePolling(() => fetchModalData(true), ENV.DASHBOARD_POLL_MS, open);
+  const handleClose = useCallback(() => {
+    onApiChange(modalApiId);
+    onTimeFilterChange(modalTimeFilter);
+    onDateChange?.(modalStartDate, modalEndDate);
+    onClose();
+  }, [modalApiId, modalTimeFilter, modalStartDate, modalEndDate, onApiChange, onTimeFilterChange, onDateChange, onClose]);
+
+  const handleModalTimeFilterChange = (filter: ApiTimeFilterValue) => {
+    setModalTimeFilter(filter);
+    if (filter !== 'custom') {
+      setModalStartDate('');
+      setModalEndDate('');
+    }
+  };
+
+  const handleModalDateChange = (start: string, end: string) => {
+    setModalStartDate(start);
+    setModalEndDate(end);
+  };
+
+  usePolling(
+    () => fetchModalData(true),
+    ENV.GRAPH_MODAL_POLL_MS,
+    open,
+    { immediate: true }
+  );
+
+  const refreshLabelSec = ENV.GRAPH_MODAL_POLL_MS / 1000;
 
   const handleEscape = useCallback((e: KeyboardEvent) => {
-    if (e.key === 'Escape') onClose();
-  }, [onClose]);
+    if (e.key === 'Escape') handleClose();
+  }, [handleClose]);
 
   useEffect(() => {
     if (open) {
@@ -114,7 +158,7 @@ export const LineChartModal: React.FC<LineChartModalProps> = ({
 
   if (!open) return null;
 
-  const chartKey = `${selectedApiId}-${selectedTimeFilter}-${trendData.length}`;
+  const chartKey = `${modalApiId}-${modalTimeFilter}-${trendData.length}`;
   const trendSummary = computeTrendSummary(trendData);
   const displayTotal = summary.totalHits || trendSummary.totalHits;
   const displayRate = summary.successRate || trendSummary.successRate;
@@ -124,7 +168,7 @@ export const LineChartModal: React.FC<LineChartModalProps> = ({
     <div
       className="fixed inset-0 z-[100] flex items-center justify-center p-2 sm:p-4 md:p-6"
       style={{ backgroundColor: 'rgba(0, 0, 0, 0.6)', backdropFilter: 'blur(8px)' }}
-      onMouseDown={(e) => { if (e.target === e.currentTarget) onClose(); }}
+      onMouseDown={(e) => { if (e.target === e.currentTarget) handleClose(); }}
     >
       <div
         className="w-full max-w-7xl max-h-[95vh] flex flex-col rounded-2xl overflow-hidden"
@@ -141,13 +185,32 @@ export const LineChartModal: React.FC<LineChartModalProps> = ({
                 Request Trend — Live View
               </h2>
               <p className="text-[11px]" style={{ color: 'var(--text-secondary)' }}>
-                This graph refreshes every 5 seconds
+                This graph refreshes every {refreshLabelSec} seconds
               </p>
             </div>
           </div>
-          <button type="button" onClick={onClose} className="p-2 rounded-xl" style={{ backgroundColor: 'var(--card-inner)', border: '1px solid var(--border)' }}>
-            <X className="w-4 h-4" />
-          </button>
+          <div className="flex items-center gap-2 shrink-0">
+            <button
+              type="button"
+              onClick={() => fetchModalData(false)}
+              disabled={isLoading}
+              className="px-3 py-1.5 rounded-lg flex items-center gap-1.5 text-xs font-semibold"
+              style={{ backgroundColor: 'var(--card-inner)', color: 'var(--text-secondary)', border: '1px solid var(--border)' }}
+              title="Refresh graph"
+            >
+              <RefreshCw className={`w-3.5 h-3.5 ${isLoading ? 'animate-spin' : ''}`} />
+              Refresh
+            </button>
+            <button
+              type="button"
+              onClick={handleClose}
+              className="px-3 py-1.5 rounded-lg flex items-center gap-1.5 text-xs font-semibold"
+              style={{ backgroundColor: 'var(--card-inner)', color: 'var(--text-secondary)', border: '1px solid var(--border)' }}
+            >
+              <X className="w-3.5 h-3.5" />
+              Close
+            </button>
+          </div>
         </div>
 
         <div className="px-5 py-3 border-b space-y-3 shrink-0" style={{ backgroundColor: 'var(--surface)', borderColor: 'var(--border)' }}>
@@ -156,12 +219,12 @@ export const LineChartModal: React.FC<LineChartModalProps> = ({
               <button
                 key={range.value}
                 type="button"
-                onClick={() => onTimeFilterChange(range.value as ApiTimeFilterValue)}
+                onClick={() => handleModalTimeFilterChange(range.value as ApiTimeFilterValue)}
                 className="px-3 py-1.5 rounded-md text-xs font-semibold transition-colors"
                 style={{
-                  backgroundColor: selectedTimeFilter === range.value ? 'var(--primary)' : 'var(--card-inner)',
-                  color: selectedTimeFilter === range.value ? '#fff' : 'var(--text-secondary)',
-                  border: `1px solid ${selectedTimeFilter === range.value ? 'var(--primary)' : 'var(--border)'}`,
+                  backgroundColor: modalTimeFilter === range.value ? 'var(--primary)' : 'var(--card-inner)',
+                  color: modalTimeFilter === range.value ? '#fff' : 'var(--text-secondary)',
+                  border: `1px solid ${modalTimeFilter === range.value ? 'var(--primary)' : 'var(--border)'}`,
                 }}
               >
                 {range.label}
@@ -172,8 +235,8 @@ export const LineChartModal: React.FC<LineChartModalProps> = ({
           <div className="flex flex-wrap items-center gap-3">
             <div className="relative min-w-[160px]">
               <select
-                value={selectedApiId}
-                onChange={(e) => onApiChange(e.target.value)}
+                value={modalApiId}
+                onChange={(e) => setModalApiId(e.target.value)}
                 className="w-full text-xs font-semibold rounded-lg px-3 py-1.5 pr-8"
                 style={{ backgroundColor: 'var(--input-bg)', color: 'var(--text-primary)', border: '1px solid var(--input-border)' }}
               >
@@ -185,11 +248,11 @@ export const LineChartModal: React.FC<LineChartModalProps> = ({
             </div>
             <TimeFilter
               options={MAIN_API_TIME_OPTIONS}
-              selectedValue={selectedTimeFilter}
-              onChange={(val) => onTimeFilterChange(val as ApiTimeFilterValue)}
-              startDate={startDate}
-              endDate={endDate}
-              onDateChange={onDateChange}
+              selectedValue={modalTimeFilter}
+              onChange={(val) => handleModalTimeFilterChange(val as ApiTimeFilterValue)}
+              startDate={modalStartDate}
+              endDate={modalEndDate}
+              onDateChange={handleModalDateChange}
             />
             {isLoading && <Loader2 className="w-4 h-4 animate-spin" style={{ color: 'var(--primary)' }} />}
           </div>

@@ -1,6 +1,6 @@
 import React, { useEffect, useCallback, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
-import { X, TrendingUp, Clock, Loader2 } from 'lucide-react';
+import { X, TrendingUp, Clock, Loader2, RefreshCw } from 'lucide-react';
 import { TimeFilter } from './TimeFilter';
 import type { TimeOption } from './TimeFilter';
 import { TrendLineChart, TREND_CHART_QUICK_RANGES } from './TrendLineChart';
@@ -54,31 +54,77 @@ export const ApiDetailGraphModal: React.FC<ApiDetailGraphModalProps> = ({
   const [isLoading, setIsLoading] = useState(false);
   const requestRef = useRef(0);
 
-  const fetchModalData = useCallback(async (silent = true) => {
-    if (timeFilter === 'custom' && (!startDate || !endDate)) return;
-    const requestId = ++requestRef.current;
-    if (!silent) setIsLoading(true);
-    try {
-      const data = await detailsChartService.getClientDetails(clientId, timeFilter, startDate, endDate);
-      if (requestId !== requestRef.current) return;
-      const api = data.apis.find((a) => a.apiId === detail.apiId);
-      if (api) setLiveDetail(api);
-    } finally {
-      if (!silent && requestId === requestRef.current) setIsLoading(false);
-    }
-  }, [clientId, detail.apiId, timeFilter, startDate, endDate]);
+  const [modalTimeFilter, setModalTimeFilter] = useState(timeFilter);
+  const [modalStartDate, setModalStartDate] = useState(startDate);
+  const [modalEndDate, setModalEndDate] = useState(endDate);
 
   useEffect(() => {
     if (!open) return;
+    setModalTimeFilter(timeFilter);
+    setModalStartDate(startDate);
+    setModalEndDate(endDate);
     setLiveDetail(detail);
-    fetchModalData(false);
-  }, [open, clientId, detail.apiId, timeFilter, startDate, endDate]);
+  }, [open]); // eslint-disable-line react-hooks/exhaustive-deps -- seed only when modal opens
 
-  usePolling(() => fetchModalData(true), ENV.DASHBOARD_POLL_MS, open);
+  const fetchModalData = useCallback(async (silent = true) => {
+    if (modalTimeFilter === 'custom' && (!modalStartDate || !modalEndDate)) return;
+    const requestId = ++requestRef.current;
+    if (!silent) setIsLoading(true);
+    try {
+      const apiDetail = await detailsChartService.getApiTrend(
+        detail.apiId,
+        clientId,
+        modalTimeFilter,
+        modalStartDate,
+        modalEndDate,
+      );
+      if (requestId !== requestRef.current) return;
+      setLiveDetail(apiDetail);
+    } catch {
+      if (!silent && requestId === requestRef.current) {
+        setLiveDetail(detail);
+      }
+    } finally {
+      if (!silent && requestId === requestRef.current) setIsLoading(false);
+    }
+  }, [clientId, detail, modalTimeFilter, modalStartDate, modalEndDate]);
+
+  useEffect(() => {
+    if (!open) return;
+    fetchModalData(false);
+  }, [open, modalTimeFilter, modalStartDate, modalEndDate, fetchModalData]);
+
+  const handleClose = useCallback(() => {
+    onTimeFilterChange(modalTimeFilter);
+    onDateChange?.(modalStartDate, modalEndDate);
+    onClose();
+  }, [modalTimeFilter, modalStartDate, modalEndDate, onTimeFilterChange, onDateChange, onClose]);
+
+  const handleModalTimeFilterChange = (filter: ApiTimeFilterValue) => {
+    setModalTimeFilter(filter);
+    if (filter !== 'custom') {
+      setModalStartDate('');
+      setModalEndDate('');
+    }
+  };
+
+  const handleModalDateChange = (start: string, end: string) => {
+    setModalStartDate(start);
+    setModalEndDate(end);
+  };
+
+  usePolling(
+    () => fetchModalData(true),
+    ENV.GRAPH_MODAL_POLL_MS,
+    open,
+    { immediate: true }
+  );
+
+  const refreshLabelSec = ENV.GRAPH_MODAL_POLL_MS / 1000;
 
   const handleEscape = useCallback((e: KeyboardEvent) => {
-    if (e.key === 'Escape') onClose();
-  }, [onClose]);
+    if (e.key === 'Escape') handleClose();
+  }, [handleClose]);
 
   useEffect(() => {
     if (open) {
@@ -93,7 +139,7 @@ export const ApiDetailGraphModal: React.FC<ApiDetailGraphModalProps> = ({
 
   if (!open) return null;
 
-  const chartKey = `${liveDetail.apiId}-${timeFilter}-${liveDetail.trendData?.length ?? 0}`;
+  const chartKey = `${liveDetail.apiId}-${modalTimeFilter}-${liveDetail.trendData?.length ?? 0}`;
   const isEmpty = !isLoading && (!liveDetail.trendData || liveDetail.trendData.length === 0);
   const successRate = liveDetail.totalHits > 0
     ? ((liveDetail.success / liveDetail.totalHits) * 100).toFixed(2)
@@ -103,7 +149,7 @@ export const ApiDetailGraphModal: React.FC<ApiDetailGraphModalProps> = ({
     <div
       className="fixed inset-0 z-[100] flex items-center justify-center p-2 sm:p-4"
       style={{ backgroundColor: 'rgba(0,0,0,0.6)', backdropFilter: 'blur(8px)' }}
-      onMouseDown={(e) => { if (e.target === e.currentTarget) onClose(); }}
+      onMouseDown={(e) => { if (e.target === e.currentTarget) handleClose(); }}
     >
       <div
         className="w-full max-w-7xl flex flex-col rounded-2xl overflow-hidden"
@@ -113,11 +159,30 @@ export const ApiDetailGraphModal: React.FC<ApiDetailGraphModalProps> = ({
         <div className="flex items-center justify-between px-5 py-3.5 border-b" style={{ borderColor: 'var(--border)' }}>
           <div>
             <h2 className="text-sm font-extrabold" style={{ color: 'var(--text-primary)' }}>{liveDetail.apiName}</h2>
-            <p className="text-[11px]" style={{ color: 'var(--text-secondary)' }}>{clientName} · Live refresh every 5s</p>
+            <p className="text-[11px]" style={{ color: 'var(--text-secondary)' }}>{clientName} · Live refresh every {refreshLabelSec}s</p>
           </div>
-          <button type="button" onClick={onClose} className="p-2 rounded-xl" style={{ backgroundColor: 'var(--card-inner)', border: '1px solid var(--border)' }}>
-            <X className="w-4 h-4" />
-          </button>
+          <div className="flex items-center gap-2 shrink-0">
+            <button
+              type="button"
+              onClick={() => fetchModalData(false)}
+              disabled={isLoading}
+              className="px-3 py-1.5 rounded-lg flex items-center gap-1.5 text-xs font-semibold"
+              style={{ backgroundColor: 'var(--card-inner)', color: 'var(--text-secondary)', border: '1px solid var(--border)' }}
+              title="Refresh graph"
+            >
+              <RefreshCw className={`w-3.5 h-3.5 ${isLoading ? 'animate-spin' : ''}`} />
+              Refresh
+            </button>
+            <button
+              type="button"
+              onClick={handleClose}
+              className="px-3 py-1.5 rounded-lg flex items-center gap-1.5 text-xs font-semibold"
+              style={{ backgroundColor: 'var(--card-inner)', color: 'var(--text-secondary)', border: '1px solid var(--border)' }}
+            >
+              <X className="w-3.5 h-3.5" />
+              Close
+            </button>
+          </div>
         </div>
 
         <div className="px-5 py-3 border-b space-y-3" style={{ backgroundColor: 'var(--surface)', borderColor: 'var(--border)' }}>
@@ -126,12 +191,12 @@ export const ApiDetailGraphModal: React.FC<ApiDetailGraphModalProps> = ({
               <button
                 key={range.value}
                 type="button"
-                onClick={() => onTimeFilterChange(range.value as ApiTimeFilterValue)}
+                onClick={() => handleModalTimeFilterChange(range.value as ApiTimeFilterValue)}
                 className="px-3 py-1.5 rounded-md text-xs font-semibold"
                 style={{
-                  backgroundColor: timeFilter === range.value ? 'var(--primary)' : 'var(--card-inner)',
-                  color: timeFilter === range.value ? '#fff' : 'var(--text-secondary)',
-                  border: `1px solid ${timeFilter === range.value ? 'var(--primary)' : 'var(--border)'}`,
+                  backgroundColor: modalTimeFilter === range.value ? 'var(--primary)' : 'var(--card-inner)',
+                  color: modalTimeFilter === range.value ? '#fff' : 'var(--text-secondary)',
+                  border: `1px solid ${modalTimeFilter === range.value ? 'var(--primary)' : 'var(--border)'}`,
                 }}
               >
                 {range.label}
@@ -140,11 +205,11 @@ export const ApiDetailGraphModal: React.FC<ApiDetailGraphModalProps> = ({
           </div>
           <TimeFilter
             options={TIME_OPTIONS}
-            selectedValue={timeFilter}
-            onChange={(val) => onTimeFilterChange(val as ApiTimeFilterValue)}
-            startDate={startDate}
-            endDate={endDate}
-            onDateChange={onDateChange}
+            selectedValue={modalTimeFilter}
+            onChange={(val) => handleModalTimeFilterChange(val as ApiTimeFilterValue)}
+            startDate={modalStartDate}
+            endDate={modalEndDate}
+            onDateChange={handleModalDateChange}
           />
           <p className="text-xs font-semibold" style={{ color: 'var(--text-primary)' }}>
             Success Rate: <span style={{ color: 'var(--success)' }}>{successRate}%</span>

@@ -20,6 +20,7 @@ interface LineChartCardProps {
   endDate?: string;
   onDateChange?: (start: string, end: string) => void;
   onModalOpenChange?: (open: boolean) => void;
+  clientId?: string;
 }
 
 export const LineChartCard: React.FC<LineChartCardProps> = ({
@@ -38,6 +39,7 @@ export const LineChartCard: React.FC<LineChartCardProps> = ({
   endDate = '',
   onDateChange,
   onModalOpenChange,
+  clientId = 'all',
 }) => {
   const [isModalOpen, setIsModalOpen] = useState(false);
   const showCardSkeleton = isLoading && !isModalOpen;
@@ -51,6 +53,24 @@ export const LineChartCard: React.FC<LineChartCardProps> = ({
     onModalOpenChange?.(open);
   }, [onModalOpenChange]);
 
+  const modal = (
+    <LineChartModal
+      open={isModalOpen}
+      onClose={() => setModalOpen(false)}
+      initialData={data}
+      initialStats={{ totalHits: displayTotal, successRate: displayRate }}
+      apis={apis}
+      selectedApiId={selectedApiId}
+      onApiChange={onApiChange}
+      selectedTimeFilter={selectedTimeFilter}
+      onTimeFilterChange={onTimeFilterChange || (() => {})}
+      startDate={startDate}
+      endDate={endDate}
+      onDateChange={onDateChange}
+      clientId={clientId}
+    />
+  );
+
   if (showCardSkeleton) {
     return (
       <>
@@ -58,20 +78,7 @@ export const LineChartCard: React.FC<LineChartCardProps> = ({
           <div className="h-5 rounded w-1/3 mb-3" style={{ backgroundColor: 'var(--border)' }} />
           <div className="flex-1 rounded-lg mx-2" style={{ backgroundColor: 'var(--border)' }} />
         </div>
-        <LineChartModal
-          open={isModalOpen}
-          onClose={() => setModalOpen(false)}
-          initialData={data}
-          initialStats={{ totalHits: displayTotal, successRate: displayRate }}
-          apis={apis}
-          selectedApiId={selectedApiId}
-          onApiChange={onApiChange}
-          selectedTimeFilter={selectedTimeFilter}
-          onTimeFilterChange={onTimeFilterChange || (() => {})}
-          startDate={startDate}
-          endDate={endDate}
-          onDateChange={onDateChange}
-        />
+        {modal}
       </>
     );
   }
@@ -122,20 +129,7 @@ export const LineChartCard: React.FC<LineChartCardProps> = ({
         </div>
       </div>
 
-      <LineChartModal
-        open={isModalOpen}
-        onClose={() => setModalOpen(false)}
-        initialData={data}
-        initialStats={{ totalHits: displayTotal, successRate: displayRate }}
-        apis={apis}
-        selectedApiId={selectedApiId}
-        onApiChange={onApiChange}
-        selectedTimeFilter={selectedTimeFilter}
-        onTimeFilterChange={onTimeFilterChange || (() => {})}
-        startDate={startDate}
-        endDate={endDate}
-        onDateChange={onDateChange}
-      />
+      {modal}
     </>
   );
 };

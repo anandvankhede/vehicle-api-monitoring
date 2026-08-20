@@ -32,6 +32,7 @@ export const ClientServices: React.FC = () => {
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [isOpeningApi, setIsOpeningApi] = useState(false);
   const [toast, setToast] = useState('');
+  const [toastType, setToastType] = useState<'success' | 'error'>('success');
   const [loadError, setLoadError] = useState('');
 
   useEffect(() => {
@@ -95,13 +96,16 @@ export const ClientServices: React.FC = () => {
     try {
       const result = await clientService.requestApi(client.id, requestApi.name);
       if (result.success) {
+        setToastType('success');
         setToast('Your API request has been submitted successfully.');
         setRequestApi(null);
         loadApis();
       } else {
+        setToastType('error');
         setToast(result.error || 'Failed to submit request');
       }
     } catch {
+      setToastType('error');
       setToast('An unexpected error occurred');
     } finally {
       setIsSubmitting(false);
@@ -130,9 +134,11 @@ export const ClientServices: React.FC = () => {
         })),
       });
       if (!access) {
+        setToastType('error');
         setToast('API access not found. Request access first.');
       }
     } catch {
+      setToastType('error');
       setToast('Could not load API details.');
     } finally {
       setIsOpeningApi(false);
@@ -189,7 +195,14 @@ export const ClientServices: React.FC = () => {
       )}
       {/* Toast */}
       {toast && (
-        <div className="fixed top-20 right-4 z-50 flex items-center gap-2 px-4 py-3 rounded-lg text-sm shadow-lg" style={{ backgroundColor: 'var(--card)', border: '1px solid var(--success)', color: 'var(--success)' }}>
+        <div
+          className="fixed top-20 right-4 z-50 flex items-center gap-2 px-4 py-3 rounded-lg text-sm shadow-lg"
+          style={{
+            backgroundColor: 'var(--card)',
+            border: `1px solid ${toastType === 'success' ? 'var(--success)' : 'var(--error)'}`,
+            color: toastType === 'success' ? 'var(--success)' : 'var(--error)',
+          }}
+        >
           <CheckCheck className="w-4 h-4 flex-shrink-0" />
           <span>{toast}</span>
         </div>

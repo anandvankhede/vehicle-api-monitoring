@@ -107,20 +107,12 @@ const clientService = {
     return [];
   },
   async getClientApisAsync(clientId: string, portal: PortalType = 'client'): Promise<{ api: ApiInfo; status: 'Active' | 'Not Assigned' | 'Pending Approval' | 'Suspended' }[]> {
-    try {
-      const result = await api.getClientApis(clientId, portal);
-      return result.data;
-    } catch {
-      return [];
-    }
+    const result = await api.getClientApis(clientId, portal);
+    return result.data;
   },
   async getClientApiRequestsAsync(clientId: string, portal: PortalType = 'client'): Promise<ApiRequest[]> {
-    try {
-      const result = await api.getApiRequests({ client_id: clientId }, portal);
-      return result.data;
-    } catch {
-      return [];
-    }
+    const result = await api.getApiRequests({ client_id: clientId }, portal);
+    return result.data;
   },
   isUsernameTaken(_username: string): boolean {
     return false;
@@ -370,12 +362,8 @@ const clientService = {
     }
   },
   async getClientApiAccessAsync(clientId: string, portal?: PortalType): Promise<ClientApiAccess[]> {
-    try {
-      const result = await api.getClientApiAccess(clientId, portal);
-      return result.data;
-    } catch {
-      return [];
-    }
+    const result = await api.getClientApiAccess(clientId, portal);
+    return result.data;
   },
   async refreshCurrentClient(): Promise<Client | null> {
     try {

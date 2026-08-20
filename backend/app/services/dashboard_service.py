@@ -116,27 +116,34 @@ class DashboardService:
 
     async def get_user_options(self, db):
         """
-        Return the list of client options for the dashboard user filter,
-        sourced from the read-optimized `user_mapping` collection.
+        Return all active clients for the dashboard / detailed chart user filter.
 
-        Only clients that actually have an access key + assigned APIs appear,
-        so the dropdown stays in sync with the response DB mapping.
-
-        Each option:
-            - id:   Client ID (matches user_mapping.client_id)
-            - name: Company name
-            - code: Derived from username
-            - type: "enterprise" | "pro" | "standard"
+        Every active client appears in the dropdown, including newly created
+        clients that do not yet have API access or an access key assigned.
         """
-        cursor = db["user_mapping"].find({"status": "Active"})
-        mappings = await cursor.to_list(length=None)
+        clients = await db["clients"].find(
+            {"status": "Active"},
+        ).sort("company_name", 1).to_list(length=None)
+
+        mapping_by_client = {}
+        async for m in db["user_mapping"].find({"status": "Active"}):
+            cid = m.get("client_id")
+            if cid is not None:
+                mapping_by_client[str(cid)] = m
+
         options = []
-        for m in mappings:
-            if not m.get("access_key"):
-                continue
-            company = m.get("company_name") or m.get("username") or "Unknown"
-            code = (m.get("username") or company).upper().replace("_", "-")[:3]
-            assigned = m.get("apis", [])
+        for client in clients:
+            cid = str(client["_id"])
+            mapping = mapping_by_client.get(cid, {})
+            company = (
+                client.get("company_name")
+                or mapping.get("company_name")
+                or client.get("username")
+                or "Unknown"
+            )
+            username = client.get("username") or mapping.get("username") or ""
+            code = (username or company).upper().replace("_", "-")[:3] or "CLI"
+            assigned = mapping.get("apis") or []
             if len(assigned) > 2:
                 client_type = "enterprise"
             elif assigned:
@@ -144,7 +151,7 @@ class DashboardService:
             else:
                 client_type = "standard"
             options.append({
-                "id": str(m.get("client_id") or ""),
+                "id": cid,
                 "name": company,
                 "code": code,
                 "type": client_type,
