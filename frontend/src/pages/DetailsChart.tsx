@@ -108,9 +108,11 @@ export const DetailsChart: React.FC = () => {
   const dataMatchesFilter =
     detailsData != null && detailsData.timeFilter === timeFilter;
 
-  const activeDetails = dataMatchesFilter ? detailsData : null;
-  const showGridLoading =
-    isInitialLoading || isRefreshing || (detailsData != null && !dataMatchesFilter);
+  const activeDetails = detailsData;
+  const showInitialSkeleton = isInitialLoading && !detailsData;
+  const showGridOverlay =
+    !isDetailModalOpen &&
+    (isRefreshing || (detailsData != null && !dataMatchesFilter));
 
   return (
     <div className="page-container py-4 sm:py-5 lg:py-6 space-y-5">
@@ -149,7 +151,7 @@ export const DetailsChart: React.FC = () => {
         </div>
       )}
 
-      {showGridLoading && !activeDetails ? (
+      {showInitialSkeleton ? (
         <div className="grid grid-cols-1 md:grid-cols-2 gap-5">
           {Array.from({ length: 6 }).map((_, i) => (
             <div key={i} className="rounded-xl p-3 animate-pulse border" style={{ backgroundColor: 'var(--card)', borderColor: 'var(--border)' }}>
@@ -161,12 +163,12 @@ export const DetailsChart: React.FC = () => {
         </div>
       ) : activeDetails && activeDetails.apis.length > 0 ? (
         <div className="relative">
-          {showGridLoading && (
+          {showGridOverlay && (
             <div className="absolute inset-0 z-10 flex items-center justify-center rounded-xl" style={{ backgroundColor: 'rgba(0,0,0,0.08)' }}>
               <RefreshCw className="w-6 h-6 animate-spin" style={{ color: 'var(--primary)' }} />
             </div>
           )}
-          <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-2 gap-5">
+          <div className={`grid grid-cols-1 md:grid-cols-2 xl:grid-cols-2 gap-5 ${showGridOverlay ? 'opacity-80' : ''}`}>
             {activeDetails.apis.map((api) => (
             <ApiDetailGraphCard
               key={api.apiId}

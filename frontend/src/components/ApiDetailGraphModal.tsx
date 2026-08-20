@@ -52,7 +52,10 @@ export const ApiDetailGraphModal: React.FC<ApiDetailGraphModalProps> = ({
 }) => {
   const [liveDetail, setLiveDetail] = useState<ClientApiDetail>(detail);
   const [isLoading, setIsLoading] = useState(false);
+  const [isRefreshing, setIsRefreshing] = useState(false);
   const requestRef = useRef(0);
+  const hasDataRef = useRef(false);
+  const apiIdRef = useRef(detail.apiId);
 
   const [modalTimeFilter, setModalTimeFilter] = useState(timeFilter);
   const [modalStartDate, setModalStartDate] = useState(startDate);
@@ -60,19 +63,30 @@ export const ApiDetailGraphModal: React.FC<ApiDetailGraphModalProps> = ({
 
   useEffect(() => {
     if (!open) return;
+    apiIdRef.current = detail.apiId;
     setModalTimeFilter(timeFilter);
     setModalStartDate(startDate);
     setModalEndDate(endDate);
     setLiveDetail(detail);
+    hasDataRef.current = (detail.trendData?.length ?? 0) > 0;
+    setIsLoading(false);
+    setIsRefreshing(false);
   }, [open]); // eslint-disable-line react-hooks/exhaustive-deps -- seed only when modal opens
 
-  const fetchModalData = useCallback(async (silent = true) => {
+  const fetchModalData = useCallback(async (options: { blocking?: boolean } = {}) => {
+    const { blocking = false } = options;
     if (modalTimeFilter === 'custom' && (!modalStartDate || !modalEndDate)) return;
+
     const requestId = ++requestRef.current;
-    if (!silent) setIsLoading(true);
+    if (blocking || !hasDataRef.current) {
+      setIsLoading(true);
+    } else {
+      setIsRefreshing(true);
+    }
+
     try {
       const apiDetail = await detailsChartService.getApiTrend(
-        detail.apiId,
+        apiIdRef.current,
         clientId,
         modalTimeFilter,
         modalStartDate,
@@ -80,19 +94,35 @@ export const ApiDetailGraphModal: React.FC<ApiDetailGraphModalProps> = ({
       );
       if (requestId !== requestRef.current) return;
       setLiveDetail(apiDetail);
+      hasDataRef.current = (apiDetail.trendData?.length ?? 0) > 0;
     } catch {
-      if (!silent && requestId === requestRef.current) {
-        setLiveDetail(detail);
+      if (requestId === requestRef.current && blocking && !hasDataRef.current) {
+        setLiveDetail((prev) => ({ ...prev, trendData: [] }));
       }
     } finally {
-      if (!silent && requestId === requestRef.current) setIsLoading(false);
+      if (requestId === requestRef.current) {
+        setIsLoading(false);
+        setIsRefreshing(false);
+      }
     }
-  }, [clientId, detail, modalTimeFilter, modalStartDate, modalEndDate]);
+  }, [clientId, modalTimeFilter, modalStartDate, modalEndDate]);
 
   useEffect(() => {
     if (!open) return;
-    fetchModalData(false);
+    if (modalTimeFilter === 'custom' && (!modalStartDate || !modalEndDate)) return;
+
+    const delay = modalTimeFilter === 'custom' ? 400 : 0;
+    const timer = window.setTimeout(() => {
+      fetchModalData({ blocking: !hasDataRef.current });
+    }, delay);
+    return () => window.clearTimeout(timer);
   }, [open, modalTimeFilter, modalStartDate, modalEndDate, fetchModalData]);
+
+  usePolling(
+    () => fetchModalData(),
+    ENV.GRAPH_MODAL_POLL_MS,
+    open && !(modalTimeFilter === 'custom' && (!modalStartDate || !modalEndDate))
+  );
 
   const handleClose = useCallback(() => {
     onTimeFilterChange(modalTimeFilter);
@@ -112,13 +142,6 @@ export const ApiDetailGraphModal: React.FC<ApiDetailGraphModalProps> = ({
     setModalStartDate(start);
     setModalEndDate(end);
   };
-
-  usePolling(
-    () => fetchModalData(true),
-    ENV.GRAPH_MODAL_POLL_MS,
-    open,
-    { immediate: true }
-  );
 
   const refreshLabelSec = ENV.GRAPH_MODAL_POLL_MS / 1000;
 
@@ -140,7 +163,9 @@ export const ApiDetailGraphModal: React.FC<ApiDetailGraphModalProps> = ({
   if (!open) return null;
 
   const chartKey = `${liveDetail.apiId}-${modalTimeFilter}-${liveDetail.trendData?.length ?? 0}`;
-  const isEmpty = !isLoading && (!liveDetail.trendData || liveDetail.trendData.length === 0);
+  const hasTrendData = (liveDetail.trendData?.length ?? 0) > 0;
+  const showBlockingLoader = isLoading && !hasTrendData;
+  const isEmpty = !showBlockingLoader && !isRefreshing && !hasTrendData;
   const successRate = liveDetail.totalHits > 0
     ? ((liveDetail.success / liveDetail.totalHits) * 100).toFixed(2)
     : '0.00';
@@ -164,13 +189,13 @@ export const ApiDetailGraphModal: React.FC<ApiDetailGraphModalProps> = ({
           <div className="flex items-center gap-2 shrink-0">
             <button
               type="button"
-              onClick={() => fetchModalData(false)}
+              onClick={() => fetchModalData({ blocking: true })}
               disabled={isLoading}
               className="px-3 py-1.5 rounded-lg flex items-center gap-1.5 text-xs font-semibold"
               style={{ backgroundColor: 'var(--card-inner)', color: 'var(--text-secondary)', border: '1px solid var(--border)' }}
               title="Refresh graph"
             >
-              <RefreshCw className={`w-3.5 h-3.5 ${isLoading ? 'animate-spin' : ''}`} />
+              <RefreshCw className={`w-3.5 h-3.5 ${isLoading || isRefreshing ? 'animate-spin' : ''}`} />
               Refresh
             </button>
             <button
@@ -218,14 +243,19 @@ export const ApiDetailGraphModal: React.FC<ApiDetailGraphModalProps> = ({
             <span className="ml-3 inline-flex items-center gap-1" style={{ color: 'var(--text-muted)' }}>
               <Clock className="w-3 h-3" /> Avg {liveDetail.avgResponseTimeMs}ms
             </span>
-            {isLoading && <Loader2 className="w-4 h-4 inline ml-2 animate-spin" style={{ color: 'var(--primary)' }} />}
+            {isRefreshing && <Loader2 className="w-4 h-4 inline ml-2 animate-spin" style={{ color: 'var(--primary)' }} />}
           </p>
         </div>
 
         <div className="flex-1 p-5 relative min-h-[300px]">
-          {isLoading && (
+          {showBlockingLoader && (
             <div className="absolute inset-0 z-10 flex items-center justify-center" style={{ backgroundColor: 'rgba(0,0,0,0.12)' }}>
               <Loader2 className="w-8 h-8 animate-spin" style={{ color: 'var(--primary)' }} />
+            </div>
+          )}
+          {isRefreshing && hasTrendData && (
+            <div className="absolute top-2 right-2 z-10 p-1.5 rounded-full" style={{ backgroundColor: 'var(--card)' }}>
+              <Loader2 className="w-4 h-4 animate-spin" style={{ color: 'var(--primary)' }} />
             </div>
           )}
           {isEmpty ? (

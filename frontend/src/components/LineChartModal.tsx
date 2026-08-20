@@ -58,9 +58,10 @@ export const LineChartModal: React.FC<LineChartModalProps> = ({
   const [trendData, setTrendData] = useState<RequestTrendDataPoint[]>(initialData);
   const [summary, setSummary] = useState({ totalHits: initialStats?.totalHits ?? 0, successRate: initialStats?.successRate ?? 0 });
   const [isLoading, setIsLoading] = useState(false);
+  const [isRefreshing, setIsRefreshing] = useState(false);
   const requestRef = useRef(0);
+  const hasDataRef = useRef(false);
 
-  // Local filter state — avoids closing the modal when parent re-renders on filter change.
   const [modalApiId, setModalApiId] = useState(selectedApiId);
   const [modalTimeFilter, setModalTimeFilter] = useState(selectedTimeFilter);
   const [modalStartDate, setModalStartDate] = useState(startDate);
@@ -76,14 +77,22 @@ export const LineChartModal: React.FC<LineChartModalProps> = ({
     if (initialStats) {
       setSummary({ totalHits: initialStats.totalHits, successRate: initialStats.successRate });
     }
+    hasDataRef.current = initialData.length > 0;
+    setIsLoading(false);
+    setIsRefreshing(false);
   }, [open]); // eslint-disable-line react-hooks/exhaustive-deps -- seed only when modal opens
 
-  const fetchModalData = useCallback(async (silent = true) => {
+  const fetchModalData = useCallback(async (options: { blocking?: boolean } = {}) => {
+    const { blocking = false } = options;
     if (!modalApiId) return;
     if (modalTimeFilter === 'custom' && (!modalStartDate || !modalEndDate)) return;
 
     const requestId = ++requestRef.current;
-    if (!silent) setIsLoading(true);
+    if (blocking || !hasDataRef.current) {
+      setIsLoading(true);
+    } else {
+      setIsRefreshing(true);
+    }
 
     try {
       const stats = await dashboardService.getApiMonitoringStats(
@@ -96,21 +105,35 @@ export const LineChartModal: React.FC<LineChartModalProps> = ({
       if (requestId !== requestRef.current) return;
       setTrendData(stats.trendData);
       setSummary({ totalHits: stats.totalHits, successRate: stats.successRate });
+      hasDataRef.current = stats.trendData.length > 0;
     } catch {
-      if (!silent && requestId === requestRef.current) {
+      if (requestId === requestRef.current && blocking && !hasDataRef.current) {
         setTrendData([]);
       }
     } finally {
-      if (!silent && requestId === requestRef.current) {
+      if (requestId === requestRef.current) {
         setIsLoading(false);
+        setIsRefreshing(false);
       }
     }
   }, [modalApiId, modalTimeFilter, modalStartDate, modalEndDate, clientId]);
 
   useEffect(() => {
     if (!open) return;
-    fetchModalData(false);
+    if (modalTimeFilter === 'custom' && (!modalStartDate || !modalEndDate)) return;
+
+    const delay = modalTimeFilter === 'custom' ? 400 : 0;
+    const timer = window.setTimeout(() => {
+      fetchModalData({ blocking: !hasDataRef.current });
+    }, delay);
+    return () => window.clearTimeout(timer);
   }, [open, modalApiId, modalTimeFilter, modalStartDate, modalEndDate, fetchModalData]);
+
+  usePolling(
+    () => fetchModalData(),
+    ENV.GRAPH_MODAL_POLL_MS,
+    open && !(modalTimeFilter === 'custom' && (!modalStartDate || !modalEndDate))
+  );
 
   const handleClose = useCallback(() => {
     onApiChange(modalApiId);
@@ -131,13 +154,6 @@ export const LineChartModal: React.FC<LineChartModalProps> = ({
     setModalStartDate(start);
     setModalEndDate(end);
   };
-
-  usePolling(
-    () => fetchModalData(true),
-    ENV.GRAPH_MODAL_POLL_MS,
-    open,
-    { immediate: true }
-  );
 
   const refreshLabelSec = ENV.GRAPH_MODAL_POLL_MS / 1000;
 
@@ -162,7 +178,8 @@ export const LineChartModal: React.FC<LineChartModalProps> = ({
   const trendSummary = computeTrendSummary(trendData);
   const displayTotal = summary.totalHits || trendSummary.totalHits;
   const displayRate = summary.successRate || trendSummary.successRate;
-  const isEmpty = !isLoading && trendData.length === 0;
+  const showBlockingLoader = isLoading && trendData.length === 0;
+  const isEmpty = !showBlockingLoader && !isRefreshing && trendData.length === 0;
 
   return createPortal(
     <div
@@ -192,13 +209,13 @@ export const LineChartModal: React.FC<LineChartModalProps> = ({
           <div className="flex items-center gap-2 shrink-0">
             <button
               type="button"
-              onClick={() => fetchModalData(false)}
+              onClick={() => fetchModalData({ blocking: true })}
               disabled={isLoading}
               className="px-3 py-1.5 rounded-lg flex items-center gap-1.5 text-xs font-semibold"
               style={{ backgroundColor: 'var(--card-inner)', color: 'var(--text-secondary)', border: '1px solid var(--border)' }}
               title="Refresh graph"
             >
-              <RefreshCw className={`w-3.5 h-3.5 ${isLoading ? 'animate-spin' : ''}`} />
+              <RefreshCw className={`w-3.5 h-3.5 ${isLoading || isRefreshing ? 'animate-spin' : ''}`} />
               Refresh
             </button>
             <button
@@ -254,7 +271,7 @@ export const LineChartModal: React.FC<LineChartModalProps> = ({
               endDate={modalEndDate}
               onDateChange={handleModalDateChange}
             />
-            {isLoading && <Loader2 className="w-4 h-4 animate-spin" style={{ color: 'var(--primary)' }} />}
+            {isRefreshing && <Loader2 className="w-4 h-4 animate-spin" style={{ color: 'var(--primary)' }} />}
           </div>
 
           <p className="text-xs font-semibold" style={{ color: 'var(--text-primary)' }}>
@@ -265,9 +282,14 @@ export const LineChartModal: React.FC<LineChartModalProps> = ({
         </div>
 
         <div className="flex-1 p-5 relative min-h-[320px]">
-          {isLoading && (
+          {showBlockingLoader && (
             <div className="absolute inset-0 z-10 flex items-center justify-center" style={{ backgroundColor: 'rgba(0,0,0,0.12)' }}>
               <Loader2 className="w-8 h-8 animate-spin" style={{ color: 'var(--primary)' }} />
+            </div>
+          )}
+          {isRefreshing && trendData.length > 0 && (
+            <div className="absolute top-2 right-2 z-10 p-1.5 rounded-full" style={{ backgroundColor: 'var(--card)' }}>
+              <Loader2 className="w-4 h-4 animate-spin" style={{ color: 'var(--primary)' }} />
             </div>
           )}
           {isEmpty ? (
