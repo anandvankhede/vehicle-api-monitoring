@@ -7,6 +7,8 @@ import {
 import clientService from '../services/clientService';
 import { usePolling } from '../hooks/usePolling';
 import { ENV } from '../config/env';
+import { downloadCsv, downloadExcel } from '../utils/exportHelpers';
+import { ExportFormatButtons } from '../components/ExportFormatButtons';
 import type { ApiRequest, Currency, RequestLimitFrequency } from '../types/client';
 
 export const ClientManagementApiRequests: React.FC = () => {
@@ -28,6 +30,11 @@ export const ClientManagementApiRequests: React.FC = () => {
   const [configRequestLimit, setConfigRequestLimit] = useState(10000);
   const [configFrequency, setConfigFrequency] = useState<RequestLimitFrequency>('Per Day');
   const [configStatus, setConfigStatus] = useState<'Active' | 'Suspended'>('Active');
+  const [configErrors, setConfigErrors] = useState<{
+    successPrice?: string;
+    notFoundPrice?: string;
+    requestLimit?: string;
+  }>({});
 
   const currencies: Currency[] = ['INR'];
   const frequencyOptions: RequestLimitFrequency[] = ['Per Minute', 'Per Hour', 'Per Day', 'Per Month', 'Per Year'];
@@ -100,17 +107,82 @@ export const ClientManagementApiRequests: React.FC = () => {
   });
 
   const openViewModal = (request: ApiRequest) => {
+    setConfigErrors({});
     setViewingRequest(request);
     // Pre-populate config when opening a pending request
     if (request.status === 'Pending Approval') {
       setConfigApiKey(clientService.generateApiKey());
-      setConfigSuccessPrice(0.75);
-      setConfigNotFoundPrice(0.75);
+      setConfigSuccessPrice(0);
+      setConfigNotFoundPrice(0);
       setConfigCurrency('INR');
-      setConfigRequestLimit(10000);
+      setConfigRequestLimit(0);
       setConfigFrequency('Per Day');
       setConfigStatus('Active');
     }
+  };
+
+  const validateApprovalConfig = (): boolean => {
+    const errors: typeof configErrors = {};
+    if (!configSuccessPrice || configSuccessPrice <= 0) {
+      errors.successPrice = 'Found API price is required.';
+    }
+    if (!configNotFoundPrice || configNotFoundPrice <= 0) {
+      errors.notFoundPrice = 'Not Found API price is required.';
+    }
+    if (!configRequestLimit || configRequestLimit <= 0) {
+      errors.requestLimit = 'Number of hits is required.';
+    }
+    setConfigErrors(errors);
+    return Object.keys(errors).length === 0;
+  };
+
+  const buildRequestExportData = (request: ApiRequest) => {
+    const client = clientService.getById(request.client_id);
+    const access = clientService.getClientApiAccess(request.client_id).find((a) => a.api_name === request.api_name);
+    const isPending = request.status === 'Pending Approval';
+    const successPrice = isPending ? configSuccessPrice : (access?.success_price_per_hit ?? '');
+    const notFoundPrice = isPending ? configNotFoundPrice : (access?.not_found_price_per_hit ?? '');
+    const requestLimit = isPending ? configRequestLimit : (access?.request_limit ?? '');
+    const frequency = isPending ? configFrequency : (access?.limit_frequency ?? '');
+    const currentUsage = access?.current_usage ?? 0;
+    const approvedDate = request.status === 'Approved' && request.reviewed_at
+      ? formatDateTime(request.reviewed_at)
+      : '—';
+
+    const headers = [
+      'Company', 'Email', 'Phone', 'API Name', 'Status',
+      'Request Date', 'Approved Date',
+      'Found API Price', 'Not Found API Price', 'Currency',
+      'Request Limit (Hits)', 'Frequency', 'Current Usage',
+    ];
+    const row = [
+      client?.company_name || clients[request.client_id] || '',
+      client?.email || '',
+      client?.phone || '',
+      request.api_name,
+      request.status,
+      formatDate(request.requested_at),
+      approvedDate,
+      successPrice,
+      notFoundPrice,
+      isPending ? configCurrency : (access?.currency ?? ''),
+      requestLimit,
+      frequency,
+      currentUsage,
+    ];
+    return { headers, row };
+  };
+
+  const handleExportRequest = (request: ApiRequest, format: 'csv' | 'excel') => {
+    const { headers, row } = buildRequestExportData(request);
+    const safeName = request.api_name.replace(/[^\w-]+/g, '_');
+    const filename = `api-request-${safeName}-${new Date().toISOString().split('T')[0]}`;
+    if (format === 'csv') {
+      downloadCsv(headers, [row], filename);
+    } else {
+      downloadExcel(headers, [row], filename);
+    }
+    setToast(`Request exported as ${format === 'csv' ? 'CSV' : 'Excel'}.`);
   };
 
   const handleRegenerateKey = () => {
@@ -119,6 +191,10 @@ export const ClientManagementApiRequests: React.FC = () => {
 
   const handleApproveAndAssign = () => {
     if (!viewingRequest) return;
+    if (viewingRequest.status === 'Pending Approval' && !validateApprovalConfig()) {
+      setToast('Please fill all required fields before approving.');
+      return;
+    }
 
     const config = {
       price_per_hit: configSuccessPrice,
@@ -206,7 +282,9 @@ export const ClientManagementApiRequests: React.FC = () => {
     request: ApiRequest;
     onClose: () => void;
     onApprove: () => void;
-  }> = ({ request, onClose, onApprove }) => {
+    onExport: (format: 'csv' | 'excel') => void;
+    configErrors: { successPrice?: string; notFoundPrice?: string; requestLimit?: string };
+  }> = ({ request, onClose, onApprove, onExport, configErrors: fieldErrors }) => {
     const client = clientService.getById(request.client_id);
     const companyName = client?.company_name || 'Unknown';
     const email = client?.email || '—';
@@ -259,10 +337,18 @@ export const ClientManagementApiRequests: React.FC = () => {
                 <span className="text-xs font-semibold" style={{ color: 'var(--text-primary)' }}>{formatDate(request.requested_at)}</span>
               </div>
               <div className="rounded-lg p-3" style={{ backgroundColor: 'var(--card-inner)', border: '1px solid var(--border)' }}>
-                <span className="text-[10px] font-bold uppercase tracking-wider block mb-1" style={{ color: 'var(--text-secondary)' }}>Last Updated</span>
+                <span className="text-[10px] font-bold uppercase tracking-wider block mb-1" style={{ color: 'var(--text-secondary)' }}>Approved Date</span>
                 <span className="text-xs font-semibold" style={{ color: 'var(--text-primary)' }}>
-                  {request.reviewed_at ? formatDateTime(request.reviewed_at) : '—'}
+                  {request.status === 'Approved' && request.reviewed_at
+                    ? formatDateTime(request.reviewed_at)
+                    : '—'}
                 </span>
+                <div className="flex gap-1.5 mt-2">
+                  <ExportFormatButtons
+                    onExport={onExport}
+                    compact
+                  />
+                </div>
               </div>
             </div>
 
@@ -370,7 +456,9 @@ export const ClientManagementApiRequests: React.FC = () => {
 
                   {/* Success Request Price + Currency */}
                   <div>
-                    <label className="text-xs font-medium" style={{ color: 'var(--text-secondary)' }}>Success Request Price</label>
+                    <label className="text-xs font-medium" style={{ color: 'var(--text-secondary)' }}>
+                      Found API Price <span style={{ color: 'var(--error)' }}>*</span>
+                    </label>
                     <div className="flex items-center gap-2 mt-1">
                       <div className="relative flex-1">
                         <DollarSign className="absolute left-2.5 top-1/2 -translate-y-1/2 w-3.5 h-3.5" style={{ color: 'var(--text-muted)' }} />
@@ -378,13 +466,13 @@ export const ClientManagementApiRequests: React.FC = () => {
                           type="number"
                           step="0.01"
                           min="0"
-                          value={configSuccessPrice}
+                          value={configSuccessPrice || ''}
                           onChange={(e) => {
-                            const val = Number(e.target.value);
-                            setConfigSuccessPrice(val);
-                            setConfigNotFoundPrice(val);
+                            setConfigSuccessPrice(Number(e.target.value));
+                            if (fieldErrors.successPrice) setConfigErrors((prev) => ({ ...prev, successPrice: undefined }));
                           }}
                           className="theme-input w-full pl-8 pr-3 py-2 rounded-lg text-sm focus:outline-none"
+                          placeholder="Enter price per hit"
                         />
                       </div>
                       <select
@@ -395,37 +483,54 @@ export const ClientManagementApiRequests: React.FC = () => {
                         {currencies.map((c) => <option key={c} value={c}>{c}</option>)}
                       </select>
                     </div>
+                    {fieldErrors.successPrice && (
+                      <p className="text-[10px] mt-1" style={{ color: 'var(--error)' }}>{fieldErrors.successPrice}</p>
+                    )}
                   </div>
 
                   {/* Data Not Found Price */}
                   <div>
-                    <label className="text-xs font-medium" style={{ color: 'var(--text-secondary)' }}>Data Not Found Price</label>
+                    <label className="text-xs font-medium" style={{ color: 'var(--text-secondary)' }}>
+                      Not Found API Price <span style={{ color: 'var(--error)' }}>*</span>
+                    </label>
                     <div className="relative mt-1">
                       <DollarSign className="absolute left-2.5 top-1/2 -translate-y-1/2 w-3.5 h-3.5" style={{ color: 'var(--text-muted)' }} />
                       <input
                         type="number"
                         step="0.01"
                         min="0"
-                        value={configNotFoundPrice}
-                        onChange={(e) => setConfigNotFoundPrice(Number(e.target.value))}
+                        value={configNotFoundPrice || ''}
+                        onChange={(e) => {
+                          setConfigNotFoundPrice(Number(e.target.value));
+                          if (fieldErrors.notFoundPrice) setConfigErrors((prev) => ({ ...prev, notFoundPrice: undefined }));
+                        }}
                         className="theme-input w-full pl-8 pr-3 py-2 rounded-lg text-sm focus:outline-none"
+                        placeholder="Enter price per hit"
                       />
                     </div>
-                    <p className="text-[10px] mt-1" style={{ color: 'var(--text-muted)' }}>Defaults to Success Price. Edit if needed.</p>
+                    {fieldErrors.notFoundPrice && (
+                      <p className="text-[10px] mt-1" style={{ color: 'var(--error)' }}>{fieldErrors.notFoundPrice}</p>
+                    )}
                   </div>
 
                   {/* Request Limit + Frequency */}
                   <div>
-                    <label className="text-xs font-medium" style={{ color: 'var(--text-secondary)' }}>Request Limit</label>
+                    <label className="text-xs font-medium" style={{ color: 'var(--text-secondary)' }}>
+                      Number of Hits (Request Limit) <span style={{ color: 'var(--error)' }}>*</span>
+                    </label>
                     <div className="flex items-center gap-2 mt-1">
                       <div className="relative flex-1">
                         <Gauge className="absolute left-2.5 top-1/2 -translate-y-1/2 w-3.5 h-3.5" style={{ color: 'var(--text-muted)' }} />
                         <input
                           type="number"
                           min="1"
-                          value={configRequestLimit}
-                          onChange={(e) => setConfigRequestLimit(Math.max(1, Number(e.target.value)))}
+                          value={configRequestLimit || ''}
+                          onChange={(e) => {
+                            setConfigRequestLimit(Math.max(0, Number(e.target.value)));
+                            if (fieldErrors.requestLimit) setConfigErrors((prev) => ({ ...prev, requestLimit: undefined }));
+                          }}
                           className="theme-input w-full pl-8 pr-3 py-2 rounded-lg text-sm focus:outline-none"
+                          placeholder="e.g. 10000"
                         />
                       </div>
                       <select
@@ -436,6 +541,9 @@ export const ClientManagementApiRequests: React.FC = () => {
                         {frequencyOptions.map((f) => <option key={f} value={f}>{f}</option>)}
                       </select>
                     </div>
+                    {fieldErrors.requestLimit && (
+                      <p className="text-[10px] mt-1" style={{ color: 'var(--error)' }}>{fieldErrors.requestLimit}</p>
+                    )}
                   </div>
 
                   {/* Status */}
@@ -601,6 +709,8 @@ export const ClientManagementApiRequests: React.FC = () => {
           request={viewingRequest}
           onClose={closeViewModal}
           onApprove={handleApproveAndAssign}
+          onExport={(format) => handleExportRequest(viewingRequest, format)}
+          configErrors={configErrors}
         />
       )}
     </div>

@@ -1,8 +1,10 @@
 import React, { useState, useEffect, useCallback } from 'react';
-import { Activity, Download, Calendar, Filter, DollarSign, CheckCircle } from 'lucide-react';
+import { Activity, Calendar, Filter, DollarSign, CheckCircle } from 'lucide-react';
 import { XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer, BarChart, Bar } from 'recharts';
 import { useClientAuth } from '../context/ClientAuthContext';
 import { api } from '../services/apiClient';
+import { ExportFormatButtons } from '../components/ExportFormatButtons';
+import { downloadServerExport, type ExportFormat } from '../utils/exportHelpers';
 import type { DailyUsageReport, MonthlyConsumptionReport, UsageReportFilters, DateRange } from '../types/reports';
 import { SummaryCard } from '../components/SummaryCard';
 
@@ -159,8 +161,11 @@ export const ClientUsageReports: React.FC = () => {
     }));
   };
 
-  const handleExport = async (format: 'excel' | 'csv' | 'pdf') => {
+  const [exporting, setExporting] = useState(false);
+
+  const handleExport = async (format: ExportFormat) => {
     if (!client) return;
+    setExporting(true);
     try {
       const { startDate, endDate } = toBackendDateRange(filters);
       const result = await api.exportReport(
@@ -172,16 +177,18 @@ export const ClientUsageReports: React.FC = () => {
           end_date: endDate,
         },
         'client',
-      ) as { content?: string; filename?: string };
+      ) as { content?: string; filename?: string; contentType?: string };
 
       if (result.content && result.filename) {
-        const link = document.createElement('a');
-        link.href = `data:text/csv;base64,${result.content}`;
-        link.download = result.filename;
-        link.click();
+        downloadServerExport(
+          { content: result.content, filename: result.filename, contentType: result.contentType },
+          format,
+        );
       }
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Export failed');
+    } finally {
+      setExporting(false);
     }
   };
 
@@ -248,16 +255,10 @@ export const ClientUsageReports: React.FC = () => {
             </>
           )}
 
-          <div className="flex gap-2 items-end">
-            <button
-              onClick={() => handleExport('csv')}
-              className="flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-medium"
-              style={{ backgroundColor: 'var(--card-inner)', color: 'var(--text-primary)', border: '1px solid var(--border)' }}
-            >
-              <Download className="w-4 h-4" />
-              Export CSV
-            </button>
-          </div>
+          <ExportFormatButtons
+            onExport={handleExport}
+            loading={exporting}
+          />
         </div>
       </div>
 

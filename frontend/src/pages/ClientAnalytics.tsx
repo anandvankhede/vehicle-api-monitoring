@@ -5,7 +5,6 @@ import {
   Activity,
   BarChart3,
   Search,
-  Download,
   RefreshCw,
   Filter,
   ChevronUp,
@@ -22,6 +21,8 @@ import {
 } from 'lucide-react';
 import { TimeFilter } from '../components/TimeFilter';
 import { clientAnalyticsService } from '../services/clientAnalyticsService';
+import { ExportFormatButtons } from '../components/ExportFormatButtons';
+import { exportTableData, downloadServerExport, type ExportFormat } from '../utils/exportHelpers';
 import { dashboardService } from '../services/dashboardService';
 import { usePolling } from '../hooks/usePolling';
 import { ENV } from '../config/env';
@@ -72,7 +73,7 @@ export const ClientAnalytics: React.FC = () => {
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [exporting, setExporting] = useState(false);
-  const [exportingRowId, setExportingRowId] = useState<string | null>(null);
+  const [exportingRowKey, setExportingRowKey] = useState<string | null>(null);
   const searchTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   useEffect(() => {
@@ -155,41 +156,36 @@ export const ClientAnalytics: React.FC = () => {
     setPage(1);
   };
 
-  const exportToCSV = () => {
-    if (!data) return;
+  const summaryHeaders = [
+    'Client Name', 'Client Code', 'API Name',
+    'Total Hits', 'Success', 'Failed', 'Not Found',
+    'Success Rate (%)', 'Avg Response Time (ms)',
+  ];
+
+  const getSummaryRows = () => {
+    if (!data) return [];
+    return data.records.map((r) => [
+      r.clientName, r.clientCode, r.apiName,
+      r.totalHits, r.success, r.failed, r.notFound,
+      r.successRate, r.avgResponseTimeMs,
+    ]);
+  };
+
+  const exportSummary = (format: ExportFormat) => {
+    if (!data || data.records.length === 0) return;
     setExporting(true);
     try {
-      const headers = [
-        'Client Name', 'Client Code', 'API Name',
-        'Total Hits', 'Success', 'Failed', 'Not Found',
-        'Success Rate (%)', 'Avg Response Time (ms)',
-      ];
-      const rows = data.records.map((r) => [
-        r.clientName, r.clientCode, r.apiName,
-        r.totalHits, r.success, r.failed, r.notFound,
-        r.successRate, r.avgResponseTimeMs,
-      ]);
-      const csvContent = [
-        headers.join(','),
-        ...rows.map((row) => row.join(',')),
-      ].join('\n');
-      const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
-      const url = URL.createObjectURL(blob);
-      const link = document.createElement('a');
-      link.href = url;
-      link.setAttribute('download', `client-analytics-summary-${new Date().toISOString().split('T')[0]}.csv`);
-      document.body.appendChild(link);
-      link.click();
-      document.body.removeChild(link);
-      URL.revokeObjectURL(url);
+      const filename = `client-analytics-summary-${new Date().toISOString().split('T')[0]}`;
+      exportTableData(format, summaryHeaders, getSummaryRows(), filename);
     } finally {
       setExporting(false);
     }
   };
 
-  const exportRowReport = async (record: ClientActivityRecord) => {
+  const exportRowReport = async (record: ClientActivityRecord, format: ExportFormat) => {
     if (!record.clientId) return;
-    setExportingRowId(record.id);
+    const rowKey = `${record.id}-${format}`;
+    setExportingRowKey(rowKey);
     try {
       const result = await clientAnalyticsService.exportDetailReport({
         clientId: record.clientId,
@@ -199,18 +195,16 @@ export const ClientAnalytics: React.FC = () => {
         statusFilter,
         startDate,
         endDate,
+        format,
       });
-      const link = document.createElement('a');
-      link.href = `data:text/csv;base64,${result.content}`;
-      link.download = result.filename;
-      link.click();
+      downloadServerExport(result, format);
       if (result.truncated) {
         alert(`Export limited to ${result.rowCount?.toLocaleString()} rows. Narrow the time filter for a complete export.`);
       }
     } catch {
       setError('Failed to export detail report. Please try again.');
     } finally {
-      setExportingRowId(null);
+      setExportingRowKey(null);
     }
   };
 
@@ -442,21 +436,12 @@ export const ClientAnalytics: React.FC = () => {
                 >
                   <RefreshCw className={`w-3 h-3 ${isLoading ? 'animate-spin' : ''}`} />
                 </button>
-                <button
-                  onClick={exportToCSV}
-                  disabled={!data || data.records.length === 0 || exporting}
-                  className="px-3 py-2 rounded-lg border transition-colors flex items-center gap-1.5 text-xs font-semibold"
-                  style={{
-                    backgroundColor: 'var(--primary)',
-                    color: '#ffffff',
-                    borderColor: 'var(--primary)',
-                    opacity: !data || data.records.length === 0 || exporting ? 0.6 : 1,
-                  }}
-                  title="Export CSV"
-                >
-                  <Download className="w-3.5 h-3.5" />
-                  {exporting ? 'Exporting...' : 'Export Summary'}
-                </button>
+                <ExportFormatButtons
+                  onExport={exportSummary}
+                  disabled={!data || data.records.length === 0}
+                  loading={exporting}
+                  compact
+                />
               </div>
             </div>
           </div>
@@ -629,21 +614,12 @@ export const ClientAnalytics: React.FC = () => {
                           {record.avgResponseTimeMs}ms
                         </td>
                         <td className="px-3 py-3 text-center whitespace-nowrap">
-                          <button
-                            type="button"
-                            onClick={() => exportRowReport(record)}
-                            disabled={exportingRowId === record.id || !record.clientId}
-                            className="inline-flex items-center gap-1 px-2.5 py-1.5 rounded-lg text-[10px] font-semibold transition-colors disabled:opacity-50"
-                            style={{
-                              backgroundColor: 'var(--primary-light)',
-                              color: 'var(--primary)',
-                              border: '1px solid color-mix(in srgb, var(--primary) 25%, transparent)',
-                            }}
-                            title="Download transaction report for current filters"
-                          >
-                            <Download className={`w-3 h-3 ${exportingRowId === record.id ? 'animate-pulse' : ''}`} />
-                            {exportingRowId === record.id ? 'Exporting...' : 'Export'}
-                          </button>
+                          <ExportFormatButtons
+                            onExport={(format) => exportRowReport(record, format)}
+                            disabled={!record.clientId}
+                            loading={exportingRowKey === `${record.id}-csv` || exportingRowKey === `${record.id}-excel`}
+                            compact
+                          />
                         </td>
                       </tr>
                     ))}

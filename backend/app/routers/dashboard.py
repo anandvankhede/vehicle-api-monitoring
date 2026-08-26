@@ -318,12 +318,13 @@ async def export_client_analytics_detail(
     status_filter: str = Query("all"),
     start_date: Optional[str] = Query(None),
     end_date: Optional[str] = Query(None),
+    format: str = Query("csv", description="csv | excel"),
     db=Depends(get_database),
     response_db=Depends(get_response_database),
     _=Depends(get_current_admin),
 ):
     """
-    Export raw transaction rows for one client + API as CSV.
+    Export raw transaction rows for one client + API as CSV or Excel.
 
     Respects the same time and status filters as the Client Analytics table.
     """
@@ -338,6 +339,7 @@ async def export_client_analytics_detail(
             status_filter=status_filter,
             start_date=start_date,
             end_date=end_date,
+            export_format=format,
         )
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))

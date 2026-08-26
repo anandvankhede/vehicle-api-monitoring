@@ -1,8 +1,10 @@
 import React, { useState, useMemo } from 'react';
-import { Activity, Download, Calendar, Filter, DollarSign, CheckCircle } from 'lucide-react';
+import { Activity, Calendar, Filter, DollarSign, CheckCircle } from 'lucide-react';
 import { XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer, BarChart, Bar } from 'recharts';
 import { useAuth } from '../context/AuthContext';
 import { reportService } from '../services/reportService';
+import { ExportFormatButtons } from '../components/ExportFormatButtons';
+import { exportTableData, type ExportFormat } from '../utils/exportHelpers';
 import type { UsageReportFilters, DateRange, RequestStatus } from '../types/reports';
 import { SummaryCard } from '../components/SummaryCard';
 
@@ -33,8 +35,42 @@ export const UsageReports: React.FC = () => {
     setFilters(prev => ({ ...prev, status }));
   };
 
-  const handleExport = (format: 'excel' | 'csv' | 'pdf') => {
-    alert(`Exporting ${format.toUpperCase()} report... (Feature ready for backend integration)`);
+  const handleExport = (format: ExportFormat) => {
+    const filename = `usage-report-${activeTab}-${new Date().toISOString().split('T')[0]}`;
+    if (activeTab === 'daily') {
+      exportTableData(
+        format,
+        ['Date', 'Success', 'Failed', 'Not Found', 'Total', 'Cost'],
+        dailyReport.map((day) => [
+          day.date,
+          day.success_requests,
+          day.failed_requests,
+          day.not_found_requests,
+          day.total_requests,
+          (day.cost ?? 0).toFixed(2),
+        ]),
+        filename,
+      );
+      return;
+    }
+
+    exportTableData(
+      format,
+      ['Month', 'Year', 'Total Requests', 'Success', 'Failed', 'Not Found', 'Revenue', 'Cost', 'Avg Daily Usage', 'Peak Usage Date'],
+      [[
+        monthlyReport.month,
+        monthlyReport.year,
+        monthlyReport.total_requests,
+        monthlyReport.success_requests,
+        monthlyReport.failed_requests,
+        monthlyReport.not_found_requests,
+        monthlyReport.total_revenue.toFixed(2),
+        monthlyReport.total_cost.toFixed(2),
+        monthlyReport.avg_daily_usage,
+        monthlyReport.peak_usage_date,
+      ]],
+      filename,
+    );
   };
 
   return (
@@ -140,42 +176,7 @@ export const UsageReports: React.FC = () => {
 
           {/* Export Buttons */}
           <div className="flex gap-2 items-end">
-            <button
-              onClick={() => handleExport('excel')}
-              className="flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-medium transition-colors"
-              style={{
-                backgroundColor: 'var(--card-inner)',
-                color: 'var(--text-primary)',
-                border: '1px solid var(--border)',
-              }}
-            >
-              <Download className="w-4 h-4" />
-              Excel
-            </button>
-            <button
-              onClick={() => handleExport('csv')}
-              className="flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-medium transition-colors"
-              style={{
-                backgroundColor: 'var(--card-inner)',
-                color: 'var(--text-primary)',
-                border: '1px solid var(--border)',
-              }}
-            >
-              <Download className="w-4 h-4" />
-              CSV
-            </button>
-            <button
-              onClick={() => handleExport('pdf')}
-              className="flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-medium transition-colors"
-              style={{
-                backgroundColor: 'var(--card-inner)',
-                color: 'var(--text-primary)',
-                border: '1px solid var(--border)',
-              }}
-            >
-              <Download className="w-4 h-4" />
-              PDF
-            </button>
+            <ExportFormatButtons onExport={handleExport} />
           </div>
         </div>
       </div>

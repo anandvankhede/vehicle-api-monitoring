@@ -1509,16 +1509,15 @@ async def export_client_analytics_detail(
     status_filter: str = "all",
     start_date: Optional[str] = None,
     end_date: Optional[str] = None,
+    export_format: str = "csv",
 ) -> Dict[str, Any]:
     """
-    Export raw response DB transaction rows for one client + API as CSV (base64).
+    Export raw response DB transaction rows for one client + API (CSV or Excel).
 
     Uses indexed {access_key, created_time} range scans with a tight projection
     so only export columns are read from MongoDB.
     """
-    import base64
-    import csv
-    import io
+    from app.utils.export_helpers import encode_tabular_export
 
     if not client_id or client_id == "all":
         raise ValueError("client_id is required for detail export")
@@ -1578,17 +1577,16 @@ async def export_client_analytics_detail(
     )
     truncated = len(docs) >= MAX_ANALYTICS_EXPORT_ROWS
 
-    output = io.StringIO()
-    writer = csv.writer(output)
-    writer.writerow([
+    headers = [
         "created_time",
         header_request,
         "response.response_code",
         "response.response_msg",
-    ])
+    ]
+    rows: List[List[Any]] = []
     for doc in docs:
         _, req_val = _extract_request_field(doc.get("request"), resolved_api)
-        writer.writerow([
+        rows.append([
             doc.get("created_time", ""),
             req_val,
             _extract_response_code(doc.get("response")),
@@ -1602,20 +1600,18 @@ async def export_client_analytics_detail(
         or "client"
     )
     safe_slug = str(client_slug).lower().replace(" ", "_")
-    filename = (
+    filename_stem = (
         f"{safe_slug}_{resolved_api}_{time_filter}_"
-        f"{datetime.now(timezone.utc).strftime('%Y%m%d_%H%M%S')}.csv"
+        f"{datetime.now(timezone.utc).strftime('%Y%m%d_%H%M%S')}"
     )
 
-    csv_text = output.getvalue()
-    return {
-        "content": base64.b64encode(csv_text.encode("utf-8")).decode("utf-8"),
-        "filename": filename,
-        "contentType": "text/csv",
+    result = encode_tabular_export(headers, rows, export_format, filename_stem)
+    result.update({
         "rowCount": len(docs),
         "totalRows": len(docs),
         "truncated": truncated,
-    }
+    })
+    return result
 
 
 # -----------------------------------------------------------------------------

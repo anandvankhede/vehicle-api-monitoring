@@ -60,7 +60,8 @@ export const clientAnalyticsService = {
     statusFilter: string;
     startDate?: string;
     endDate?: string;
-  }): Promise<{ content: string; filename: string; rowCount?: number; truncated?: boolean }> {
+    format?: 'csv' | 'excel';
+  }): Promise<{ content: string; filename: string; contentType?: string; rowCount?: number; truncated?: boolean }> {
     const result = await api.exportClientAnalyticsDetail({
       clientId: params.clientId,
       apiId: params.apiId,
@@ -69,13 +70,15 @@ export const clientAnalyticsService = {
       statusFilter: params.statusFilter,
       startDate: params.startDate,
       endDate: params.endDate,
-    }) as { content?: string; filename?: string; rowCount?: number; truncated?: boolean };
+      format: params.format ?? 'csv',
+    }) as { content?: string; filename?: string; contentType?: string; rowCount?: number; truncated?: boolean };
     if (!result.content || !result.filename) {
       throw new Error('Export failed — empty response from server');
     }
     return {
       content: result.content,
       filename: result.filename,
+      contentType: result.contentType,
       rowCount: result.rowCount,
       truncated: result.truncated,
     };

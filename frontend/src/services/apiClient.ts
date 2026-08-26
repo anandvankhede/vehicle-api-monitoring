@@ -491,6 +491,7 @@ export const api = {
     statusFilter?: string;
     startDate?: string;
     endDate?: string;
+    format?: 'csv' | 'excel';
   }) => {
     const searchParams = new URLSearchParams();
     searchParams.set('client_id', params.clientId);
@@ -502,6 +503,7 @@ export const api = {
     }
     if (params.startDate) searchParams.set('start_date', params.startDate);
     if (params.endDate) searchParams.set('end_date', params.endDate);
+    if (params.format) searchParams.set('format', params.format);
     return httpGet(`/dashboard/client-analytics/export?${searchParams.toString()}`);
   },
   getClientDetails: (

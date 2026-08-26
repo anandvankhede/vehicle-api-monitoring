@@ -826,7 +826,6 @@ class ReportService:
         Returns a dict with 'content' (base64-encoded file data) and
         'filename' for the frontend to download.
         """
-        import base64
 
         # Fetch the underlying data based on report_type
         if report_type in ("usage", "daily"):
@@ -848,14 +847,11 @@ class ReportService:
             rows = []
             headers = []
 
-        # Generate CSV
-        output = io.StringIO()
-        writer = csv.writer(output)
-        writer.writerow(headers)
+        table_rows = []
         for row in rows:
             if isinstance(row, dict):
                 if report_type == "invoice":
-                    writer.writerow([
+                    table_rows.append([
                         row.get("invoice_number", ""),
                         row.get("company_name", ""),
                         row.get("invoice_date", ""),
@@ -864,7 +860,7 @@ class ReportService:
                         row.get("status", ""),
                     ])
                 elif report_type == "monthly":
-                    writer.writerow([
+                    table_rows.append([
                         row.get("date", ""),
                         row.get("total_requests", 0),
                         row.get("success_requests", 0),
@@ -873,7 +869,7 @@ class ReportService:
                         f"{row.get('cost', 0):.2f}",
                     ])
                 else:
-                    writer.writerow([
+                    table_rows.append([
                         row.get("date", ""),
                         row.get("client_name", ""),
                         row.get("api_name", ""),
@@ -884,16 +880,7 @@ class ReportService:
                         f"{row.get('total_cost', 0):.2f}",
                     ])
 
-        csv_content = output.getvalue()
-        b64_content = base64.b64encode(csv_content.encode("utf-8")).decode("utf-8")
-
-        # Generate filename
         now = datetime.now(timezone.utc)
-        filename = f"report-{report_type}-{now.strftime('%Y%m%d_%H%M%S')}"
-        extension = "csv" if export_format == "csv" else "xlsx"
-
-        return {
-            "content": b64_content,
-            "filename": f"{filename}.{extension}",
-            "contentType": "text/csv" if export_format == "csv" else "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-        }
+        filename_stem = f"report-{report_type}-{now.strftime('%Y%m%d_%H%M%S')}"
+        from app.utils.export_helpers import encode_tabular_export
+        return encode_tabular_export(headers, table_rows, export_format, filename_stem)
