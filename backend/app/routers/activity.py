@@ -11,8 +11,9 @@ from fastapi import APIRouter, Depends, Query
 from app.database import get_database
 from app.dependencies.auth import get_current_admin
 from app.schemas.common import ErrorResponse
-
+                                                                             
 router = APIRouter(prefix="/activity", tags=["Activity Records"])
+
 
 
 @router.get(
@@ -25,7 +26,7 @@ async def list_activity_records(
     db=Depends(get_database),
     _=Depends(get_current_admin),
 ):
-    """
+    """                             
     List all activity records (admin view).
 
     Query params:

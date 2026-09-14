@@ -258,10 +258,13 @@ async def approve_api_request(
         result = await client_service.approve_api_request(db, request_id, body.model_dump())
         return result
     except ValueError as e:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail=str(e),
+        msg = str(e)
+        status_code = (
+            status.HTTP_409_CONFLICT
+            if "already assigned" in msg.lower()
+            else status.HTTP_400_BAD_REQUEST
         )
+        raise HTTPException(status_code=status_code, detail=msg)
 
 
 @router.post(

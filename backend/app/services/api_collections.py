@@ -161,16 +161,35 @@ async def is_valid_api_name(api_name: str, response_db=None) -> bool:
     return await is_live_response_db_api(api_name, response_db)
 
 
+_catalog_names_cache: Optional[Tuple[float, str, List[str]]] = None
+
+
 async def get_catalog_api_names(db, *, active_only: bool = False) -> List[str]:
     """Return API names registered in the application catalog (source of truth)."""
+    global _catalog_names_cache
+    ttl = max(0, settings.RESPONSE_DB_COLLECTION_CACHE_SECONDS)
+    cache_key = "active" if active_only else "all"
+    now = time.time()
+
+    if (
+        ttl > 0
+        and _catalog_names_cache is not None
+        and _catalog_names_cache[1] == cache_key
+        and (now - _catalog_names_cache[0]) < ttl
+    ):
+        return list(_catalog_names_cache[2])
+
     query: dict = {}
     if active_only:
         query["is_active"] = True
     docs = await db["apis"].find(query, {"name": 1}).to_list(length=None)
-    return sorted(
+    names = sorted(
         doc["name"] for doc in docs
         if doc.get("name") and is_catalog_api_name(doc["name"])
     )
+    if ttl > 0:
+        _catalog_names_cache = (now, cache_key, names)
+    return names
 
 
 async def is_registered_api_name(db, api_name: str, response_db=None) -> bool:

@@ -14,6 +14,7 @@ interface ApiHeaderField {
 
 interface ApiFormData {
   name: string;
+  redis_api_key: string;
   description: string;
   endpoint: string;
   method: string;
@@ -53,6 +54,7 @@ export const EditApi: React.FC = () => {
         }));
         setForm({
           name: (raw.name as string) || '',
+          redis_api_key: (raw.redis_api_key as string) || '',
           description: (raw.description as string) || '',
           endpoint: (raw.endpoint as string) || '',
           method: (raw.method as string) || 'GET',
@@ -139,6 +141,7 @@ export const EditApi: React.FC = () => {
 
       await api.updateApiInfo(id, {
         name: (form.name || '').trim(),
+        redis_api_key: (form.redis_api_key || '').trim() || null,
         description: (form.description || '').trim(),
         endpoint: (form.endpoint || '').trim(),
         method: form.method,
@@ -231,10 +234,25 @@ export const EditApi: React.FC = () => {
                 type="text"
                 value={form?.name || ''}
                 onChange={(e) => updateField('name', e.target.value)}
-                placeholder="e.g., Vehicle Lookup"
+                placeholder="e.g. rc_to_mobile"
                 className={`${inputStyle} mt-1`}
                 disabled={isSubmitting}
               />
+            </div>
+
+            <div>
+              <label className="text-xs font-medium" style={labelStyle}>Redis API Key</label>
+              <input
+                type="text"
+                value={form?.redis_api_key || ''}
+                onChange={(e) => updateField('redis_api_key', e.target.value.toLowerCase().replace(/[^a-z0-9_]/g, ''))}
+                placeholder="e.g. rc_to_mob (optional — defaults to API name)"
+                className={`${inputStyle} mt-1 font-mono`}
+                disabled={isSubmitting}
+              />
+              <p className="text-[10px] mt-1" style={{ color: 'var(--text-muted)' }}>
+                Stored in Redis api_list for the gateway. Leave empty to use the catalog API name.
+              </p>
             </div>
 
             <div>

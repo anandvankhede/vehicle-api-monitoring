@@ -186,6 +186,11 @@ export const ApiManagement: React.FC = () => {
 
                 {/* Body */}
                 <h3 className="text-sm font-bold mb-1" style={{ color: 'var(--text-primary)' }}>{apiItem.name}</h3>
+                {apiItem.redis_api_key && apiItem.redis_api_key !== apiItem.name && (
+                  <p className="text-[10px] mb-1 font-mono" style={{ color: 'var(--primary)' }}>
+                    Redis: {apiItem.redis_api_key}
+                  </p>
+                )}
                 <p className="text-xs mb-2" style={{ color: 'var(--text-secondary)' }}>{apiItem.description}</p>
                 {apiItem.response_collection && (
                   <p className="text-[10px] mb-3 font-mono" style={{ color: 'var(--text-muted)' }}>

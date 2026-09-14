@@ -41,6 +41,9 @@ export const Dashboard: React.FC = () => {
   const [isMonitoringLoading, setIsMonitoringLoading] = useState<boolean>(true);
   const [isTrendModalOpen, setIsTrendModalOpen] = useState(false);
   const monitoringRequestRef = useRef(0);
+  const skipApisReloadRef = useRef(true);
+  const hasMonitoringDataRef = useRef(false);
+  const [isMonitoringRefreshing, setIsMonitoringRefreshing] = useState(false);
 
   // Global Error State
   const [error, setError] = useState<string | null>(null);
@@ -92,22 +95,26 @@ export const Dashboard: React.FC = () => {
     }
   }, [selectedUserId]);
 
-  // 1. Initial Load: Header summary, Users list, and Available APIs list
+  // 1. Initial load: single bootstrap request (stats + users + APIs) — cached
   useEffect(() => {
     let isMounted = true;
     const fetchInitialData = async () => {
       try {
         setIsSummaryLoading(true);
-        const [summaryRes, usersRes] = await Promise.all([
-          dashboardService.getDashboardSummary(),
-          dashboardService.getUsers(),
-        ]);
-
-        if (isMounted) {
-          setSummary(summaryRes);
-          setUsers(usersRes);
+        const bootstrap = await dashboardService.getBootstrap();
+        if (!isMounted) return;
+        setSummary(bootstrap.summary);
+        setUsers(bootstrap.users);
+        if (bootstrap.apis.length > 0) {
+          setAvailableApis(bootstrap.apis);
+          setSelectedApiId(bootstrap.apis[0].id);
+          setApisLoadError(null);
+        } else {
+          setApisLoadError(
+            'No response_db APIs found. Ensure result_* collections exist on the response database.'
+          );
         }
-      } catch (err) {
+      } catch {
         if (isMounted) setError('Failed to load initial system metadata.');
       } finally {
         if (isMounted) setIsSummaryLoading(false);
@@ -120,8 +127,12 @@ export const Dashboard: React.FC = () => {
     };
   }, []);
 
-  // Reload monitoring API dropdown when the user filter changes
+  // Reload monitoring API dropdown when the user filter changes (bootstrap already loaded APIs for "all")
   useEffect(() => {
+    if (skipApisReloadRef.current) {
+      skipApisReloadRef.current = false;
+      return;
+    }
     loadAvailableApis(selectedUserId);
   }, [selectedUserId, loadAvailableApis]);
 
@@ -133,7 +144,8 @@ export const Dashboard: React.FC = () => {
         selectedUserId,
         userTimeFilter,
         userStartDate,
-        userEndDate
+        userEndDate,
+        silent,
       );
       setUserApiStats(stats);
     } catch (err) {
@@ -157,7 +169,11 @@ export const Dashboard: React.FC = () => {
 
     const requestId = ++monitoringRequestRef.current;
     if (!silent) {
-      setIsMonitoringLoading(true);
+      if (!hasMonitoringDataRef.current) {
+        setIsMonitoringLoading(true);
+      } else {
+        setIsMonitoringRefreshing(true);
+      }
     }
 
     try {
@@ -167,10 +183,18 @@ export const Dashboard: React.FC = () => {
         apiStartDate,
         apiEndDate,
         selectedUserId,
+        silent,
+        silent ? (fresh) => {
+          if (requestId === monitoringRequestRef.current) {
+            hasMonitoringDataRef.current = true;
+            setMonitoringStats(fresh);
+          }
+        } : undefined,
       );
       if (requestId !== monitoringRequestRef.current) {
         return;
       }
+      hasMonitoringDataRef.current = true;
       setMonitoringStats(stats);
     } catch (err) {
       console.error('Failed to fetch API monitoring statistics:', err);
@@ -178,8 +202,11 @@ export const Dashboard: React.FC = () => {
         setMonitoringStats(null);
       }
     } finally {
-      if (!silent && requestId === monitoringRequestRef.current) {
-        setIsMonitoringLoading(false);
+      if (requestId === monitoringRequestRef.current) {
+        if (!silent) {
+          setIsMonitoringLoading(false);
+          setIsMonitoringRefreshing(false);
+        }
       }
     }
   }, [selectedApiId, apiTimeFilter, apiStartDate, apiEndDate, selectedUserId]);
@@ -328,7 +355,7 @@ export const Dashboard: React.FC = () => {
           onDateChange={handleApiDateChange}
           monitoringStats={monitoringStats}
           isLoading={isMonitoringLoading}
-          isRefreshing={isMonitoringLoading && monitoringStats?.timeFilter === apiTimeFilter && monitoringStats?.apiId === selectedApiId}
+          isRefreshing={isMonitoringRefreshing || (isMonitoringLoading && monitoringStats?.timeFilter === apiTimeFilter && monitoringStats?.apiId === selectedApiId)}
           onTrendModalOpenChange={setIsTrendModalOpen}
           onRefresh={() => loadMonitoringStats(false)}
           responseDbAvailable={summary?.responseDbAvailable}

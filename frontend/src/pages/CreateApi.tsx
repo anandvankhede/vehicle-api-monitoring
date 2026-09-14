@@ -14,6 +14,7 @@ interface ApiHeaderField {
 
 interface ApiFormData {
   name: string;
+  redis_api_key: string;
   description: string;
   endpoint: string;
   method: string;
@@ -25,6 +26,7 @@ interface ApiFormData {
 
 const initialForm: ApiFormData = {
   name: '',
+  redis_api_key: '',
   description: '',
   endpoint: '',
   method: 'GET',
@@ -98,6 +100,7 @@ export const CreateApi: React.FC = () => {
 
       await api.createApiInfo({
         name: form.name.trim(),
+        redis_api_key: form.redis_api_key.trim() || undefined,
         description: form.description.trim(),
         endpoint: form.endpoint.trim(),
         method: form.method,
@@ -168,10 +171,28 @@ export const CreateApi: React.FC = () => {
                 type="text"
                 value={form?.name || ''}
                 onChange={(e) => updateField('name', e.target.value)}
-                placeholder="e.g., Vehicle Lookup"
+                placeholder="e.g. rc_to_mobile"
                 className={`${inputStyle} mt-1`}
                 disabled={isSubmitting}
               />
+              <p className="text-[10px] mt-1" style={{ color: 'var(--text-muted)' }}>
+                Catalog name used in this app (MongoDB, billing, reports).
+              </p>
+            </div>
+
+            <div>
+              <label className="text-xs font-medium" style={labelStyle}>Redis API Key</label>
+              <input
+                type="text"
+                value={form?.redis_api_key || ''}
+                onChange={(e) => updateField('redis_api_key', e.target.value.toLowerCase().replace(/[^a-z0-9_]/g, ''))}
+                placeholder="e.g. rc_to_mob (optional — defaults to API name)"
+                className={`${inputStyle} mt-1 font-mono`}
+                disabled={isSubmitting}
+              />
+              <p className="text-[10px] mt-1" style={{ color: 'var(--text-muted)' }}>
+                Gateway token in Redis api_list. Example: rc_to_mob, fastag_01, chassis_to_rc_no.
+              </p>
             </div>
 
             <div>

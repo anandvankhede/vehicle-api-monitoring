@@ -1,14 +1,13 @@
 import React, { useState, useEffect } from 'react';
 import {
-  ArrowLeft, Building2, Key, BarChart3, Activity, Settings, Pause, Play, Copy, Eye, EyeOff, RefreshCw, Save, X, CheckCircle,
+  ArrowLeft, Building2, Key, BarChart3, Activity, Settings, Pause, Play, Copy, Eye, EyeOff, Save, X, CheckCircle,
 } from 'lucide-react';
 import { useNavigate, useParams, useSearchParams } from 'react-router-dom';
 import clientService from '../services/clientService';
 import { api } from '../services/apiClient';
-import type { Client, ClientApiAccess, Currency, ClientApiStatus, RequestLimitFrequency, ClientAuditEntry, ClientUsageSummary, ApiInfo } from '../types/client';
+import type { Client, ClientApiAccess, Currency, ClientApiStatus, ClientAuditEntry, ClientUsageSummary, ApiInfo } from '../types/client';
 
   const currencies: Currency[] = ['INR'];
-const frequencyOptions: RequestLimitFrequency[] = ['Per Minute', 'Per Hour', 'Per Day', 'Per Month', 'Per Year'];
 
 type TabType = 'General' | 'API Management' | 'Usage' | 'Activity' | 'Settings';
 
@@ -168,8 +167,6 @@ const ApiManagementTab: React.FC<{ client: Client; setToast: (t: string) => void
   const [assignSuccessPrice, setAssignSuccessPrice] = useState(0.5);
   const [assignNotFoundPrice, setAssignNotFoundPrice] = useState(0.5);
   const [assignApiCurrency, setAssignApiCurrency] = useState<Currency>('INR');
-  const [assignLimit, setAssignLimit] = useState(10000);
-  const [assignFrequency, setAssignFrequency] = useState<RequestLimitFrequency>('Per Month');
 
   const loadAccess = async () => {
     setIsLoading(true);
@@ -201,24 +198,27 @@ const ApiManagementTab: React.FC<{ client: Client; setToast: (t: string) => void
   const [pendingApiNames, setPendingApiNames] = useState<Set<string>>(new Set());
 
   const handleAssign = async () => {
-    const success = await clientService.assignApi(
+    const result = await clientService.assignApi(
       client.id,
       assignApiName,
-      assignLimit,
-      assignFrequency,
       assignSuccessPrice,
       assignApiCurrency,
       'admin',
       assignSuccessPrice,
       assignNotFoundPrice
     );
-    if (success) {
-      setToast(`API ${assignApiName} assigned successfully.`);
+    if (result.success) {
+      setToast(
+        result.alreadyAssigned
+          ? `API ${assignApiName} is already assigned — list updated.`
+          : `API ${assignApiName} assigned successfully.`,
+      );
       setShowAssignDialog(false);
       await loadAccess();
       onDataChange?.();
     } else {
-      setToast('Failed to assign API. It may already be assigned.');
+      setToast(result.error ?? 'Failed to assign API.');
+      await loadAccess();
     }
   };
 
@@ -242,9 +242,6 @@ const ApiManagementTab: React.FC<{ client: Client; setToast: (t: string) => void
         success_price_per_hit: managedAccess.success_price_per_hit,
         not_found_price_per_hit: managedAccess.not_found_price_per_hit,
         currency: managedAccess.currency,
-        request_limit: managedAccess.request_limit,
-        limit_frequency: managedAccess.limit_frequency,
-        current_usage: managedAccess.current_usage,
         status: managedAccess.status,
         expiry_date: managedAccess.expiry_date,
       });
@@ -258,19 +255,10 @@ const ApiManagementTab: React.FC<{ client: Client; setToast: (t: string) => void
     }
   };
 
-  const handleRegenerateKey = async () => {
-    if (!managedAccess) return;
-    const newKey = await clientService.regenerateApiKey(managedAccess.id);
-    if (newKey !== null) {
-      setManagedAccess({ ...managedAccess, api_key: newKey });
-      setShowKey(true);
-      setToast('API key regenerated.');
-    }
-  };
-
   const handleCopyKey = () => {
-    if (!managedAccess?.api_key) return;
-    navigator.clipboard.writeText(managedAccess.api_key);
+    const key = client.api_key || managedAccess?.api_key;
+    if (!key) return;
+    navigator.clipboard.writeText(key);
     setToast('API key copied to clipboard.');
   };
 
@@ -324,8 +312,8 @@ const ApiManagementTab: React.FC<{ client: Client; setToast: (t: string) => void
             <tr>
               <th className="px-4 py-2.5 text-left text-xs font-bold" style={{ color: 'var(--text-secondary)' }}>API Name</th>
               <th className="px-4 py-2.5 text-left text-xs font-bold" style={{ color: 'var(--text-secondary)' }}>Status</th>
-              <th className="px-4 py-2.5 text-left text-xs font-bold" style={{ color: 'var(--text-secondary)' }}>Request Limit</th>
-              <th className="px-4 py-2.5 text-left text-xs font-bold" style={{ color: 'var(--text-secondary)' }}>Current Usage</th>
+              <th className="px-4 py-2.5 text-left text-xs font-bold" style={{ color: 'var(--text-secondary)' }}>Success Price</th>
+              <th className="px-4 py-2.5 text-left text-xs font-bold" style={{ color: 'var(--text-secondary)' }}>Not Found Price</th>
               <th className="px-4 py-2.5 text-left text-xs font-bold" style={{ color: 'var(--text-secondary)' }}>Expiry</th>
               <th className="px-4 py-2.5 text-right text-xs font-bold" style={{ color: 'var(--text-secondary)' }}>Actions</th>
             </tr>
@@ -343,9 +331,11 @@ const ApiManagementTab: React.FC<{ client: Client; setToast: (t: string) => void
                   <td className="px-4 py-2.5 text-sm font-semibold" style={{ color: 'var(--text-primary)' }}>{access.api_name}</td>
                   <td className="px-4 py-2.5"><ApiStatusBadge status={access.status} /></td>
                   <td className="px-4 py-2.5 text-xs" style={{ color: 'var(--text-secondary)' }}>
-                    {access.request_limit.toLocaleString()} {access.limit_frequency.replace('Per ', '/')}
+                    {access.success_price_per_hit} {access.currency}
                   </td>
-                  <td className="px-4 py-2.5 text-xs" style={{ color: 'var(--text-secondary)' }}>{access.current_usage.toLocaleString()}</td>
+                  <td className="px-4 py-2.5 text-xs" style={{ color: 'var(--text-secondary)' }}>
+                    {access.not_found_price_per_hit} {access.currency}
+                  </td>
                   <td className="px-4 py-2.5 text-xs" style={{ color: 'var(--text-secondary)' }}>{access.expiry_date ? formatDate(access.expiry_date) : 'Never'}</td>
                   <td className="px-4 py-2.5">
                     <div className="flex items-center justify-end gap-1.5">
@@ -460,27 +450,9 @@ const ApiManagementTab: React.FC<{ client: Client; setToast: (t: string) => void
                 <p className="text-[10px] mt-1" style={{ color: 'var(--text-muted)' }}>Defaults to Success Price. Edit if needed.</p>
               </div>
 
-              <div>
-                <label className="text-xs font-medium" style={{ color: 'var(--text-secondary)' }}>Request Limit</label>
-                <div className="flex items-center gap-2 mt-1">
-                  <input
-                    type="number"
-                    min="1"
-                    value={assignLimit}
-                    onChange={(e) => setAssignLimit(Number(e.target.value))}
-                    className="theme-input flex-1 px-3 py-2.5 rounded text-sm focus:outline-none"
-                  />
-                  <select
-                    value={assignFrequency}
-                    onChange={(e) => setAssignFrequency(e.target.value as RequestLimitFrequency)}
-                    className="theme-select px-3 py-2.5 rounded-lg text-sm focus:outline-none"
-                  >
-                    {frequencyOptions.map((f) => (
-                      <option key={f} value={f}>{f}</option>
-                    ))}
-                  </select>
-                </div>
-              </div>
+              <p className="text-xs px-3 py-2 rounded" style={{ backgroundColor: 'var(--card-inner)', color: 'var(--text-muted)' }}>
+                Uses the client&apos;s universal API key and daily request limit from their API Access Profile.
+              </p>
             </div>
 
             <div className="flex gap-3 mt-6">
@@ -531,15 +503,15 @@ const ApiManagementTab: React.FC<{ client: Client; setToast: (t: string) => void
                 <ApiStatusBadge status={managedAccess.status} />
               </div>
 
-              {/* API Key */}
+              {/* Universal API Key (read-only — managed in API Access Profile) */}
               <div>
-                <label className="text-xs font-medium" style={{ color: 'var(--text-secondary)' }}>API Key</label>
+                <label className="text-xs font-medium" style={{ color: 'var(--text-secondary)' }}>API Key (Profile)</label>
                 <div className="flex items-center gap-2 mt-1">
                   <code
                     className="flex-1 px-3 py-1.5 rounded text-xs font-mono break-all"
                     style={{ backgroundColor: 'var(--card-inner)', color: 'var(--text-secondary)', border: '1px solid var(--border)' }}
                   >
-                    {showKey ? managedAccess.api_key : '••••••••••••••••••••••'}
+                    {showKey ? (client.api_key || managedAccess.api_key) : '••••••••••••••••••••••'}
                   </code>
                   <button
                     onClick={() => setShowKey(!showKey)}
@@ -557,53 +529,40 @@ const ApiManagementTab: React.FC<{ client: Client; setToast: (t: string) => void
                   >
                     <Copy className="w-3.5 h-3.5" />
                   </button>
-                  <button
-                    onClick={handleRegenerateKey}
-                    className="p-1.5 rounded-md transition-colors"
-                    style={{ color: 'var(--warning)', backgroundColor: 'var(--warning-bg)' }}
-                    title="Regenerate"
-                  >
-                    <RefreshCw className="w-3.5 h-3.5" />
-                  </button>
                 </div>
+                <p className="text-[10px] mt-1" style={{ color: 'var(--text-muted)' }}>
+                  Same key for all APIs. Update it in Client Management → API Access Profile.
+                </p>
               </div>
 
-              {/* Request Limit */}
-              <div>
-                <label className="text-xs font-medium" style={{ color: 'var(--text-secondary)' }}>Request Limit</label>
-                <div className="flex items-center gap-2 mt-1">
+              {/* Success / Not Found pricing */}
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <label className="text-xs font-medium" style={{ color: 'var(--text-secondary)' }}>Success Price</label>
                   <input
                     type="number"
-                    min="1"
-                    value={managedAccess.request_limit}
-                    onChange={(e) => setManagedAccess({ ...managedAccess, request_limit: Number(e.target.value) })}
-                    className="theme-input flex-1 px-3 py-1.5 rounded text-sm focus:outline-none"
+                    step="0.01"
+                    min="0"
+                    value={managedAccess.success_price_per_hit}
+                    onChange={(e) => setManagedAccess({
+                      ...managedAccess,
+                      success_price_per_hit: Number(e.target.value),
+                      price_per_hit: Number(e.target.value),
+                    })}
+                    className="theme-input w-full px-3 py-1.5 rounded text-sm mt-1 focus:outline-none"
                   />
-                  <select
-                    value={managedAccess.limit_frequency}
-                    onChange={(e) => setManagedAccess({ ...managedAccess, limit_frequency: e.target.value as RequestLimitFrequency })}
-                    className="theme-select px-2 py-1.5 rounded text-sm focus:outline-none"
-                  >
-                    {frequencyOptions.map((f) => (
-                      <option key={f} value={f}>{f}</option>
-                    ))}
-                  </select>
                 </div>
-              </div>
-
-              {/* Current Usage */}
-              <div>
-                <label className="text-xs font-medium" style={{ color: 'var(--text-secondary)' }}>Current Usage</label>
-                <input
-                  type="number"
-                  min={0}
-                  value={managedAccess.current_usage}
-                  onChange={(e) => setManagedAccess({ ...managedAccess, current_usage: Number(e.target.value) })}
-                  className="theme-input w-full px-3 py-1.5 rounded text-sm mt-1 focus:outline-none"
-                />
-                <p className="text-[10px] mt-1" style={{ color: 'var(--text-muted)' }}>
-                  {managedAccess.current_usage.toLocaleString()} / {managedAccess.request_limit.toLocaleString()} ({managedAccess.request_limit > 0 ? Math.round((managedAccess.current_usage / managedAccess.request_limit) * 100) : 0}%)
-                </p>
+                <div>
+                  <label className="text-xs font-medium" style={{ color: 'var(--text-secondary)' }}>Not Found Price</label>
+                  <input
+                    type="number"
+                    step="0.01"
+                    min="0"
+                    value={managedAccess.not_found_price_per_hit}
+                    onChange={(e) => setManagedAccess({ ...managedAccess, not_found_price_per_hit: Number(e.target.value) })}
+                    className="theme-input w-full px-3 py-1.5 rounded text-sm mt-1 focus:outline-none"
+                  />
+                </div>
               </div>
             </div>
 

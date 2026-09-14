@@ -121,7 +121,7 @@ async def get_graph(
     """Daily graph: per-date success/not_found/failed/total."""
     if time_filter not in VALID_TIME_FILTERS:
         time_filter = "last_7_days"
-    try:
+    try:                                                                                 
         mapping, api_name = await _resolve_scope(db, response_db, client_id, api_name)
         if mapping:
             return await analytics.get_usage_by_date(
@@ -131,7 +131,7 @@ async def get_graph(
         # Aggregate across all clients by date
         users = await analytics.get_dashboard_users(db)
         merged = {}
-        for u in users:
+        for u in users: 
             if not u.get("access_key"):
                 continue
             days = await analytics.get_usage_by_date(

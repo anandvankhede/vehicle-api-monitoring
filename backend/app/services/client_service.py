@@ -12,9 +12,22 @@ This is the largest service — it backs most of the admin dashboard.
 from bson import ObjectId
 from datetime import datetime, timezone, timedelta
 from typing import List, Optional, Dict, Any
+
+from pymongo.errors import DuplicateKeyError
 from app.utils.security import hash_password, verify_password
 from app.utils.helpers import generate_api_key, format_id
 from app.services.user_mapping_service import sync_user_mapping
+from app.services.redis_client_profile_service import (
+    create_client_api_profile,
+    update_client_request_limit,
+    update_client_api_key,
+    update_client_api_profile_status,
+    build_client_api_profile,
+    sync_redis_client_profile,
+    sync_redis_api_list,
+    delete_redis_client_profile,
+    get_client_api_key,
+)
 
 
 def _oid(id_str: str) -> ObjectId:
@@ -24,13 +37,112 @@ def _oid(id_str: str) -> ObjectId:
 
 async def _get_or_create_client_key(db, client_id) -> str:
     """
-    Return the client's existing access key, or generate a NEW one if the
-    client does not yet have any key (one access key per client).
+    Return the client's universal access key from clients.api_key, or legacy
+    api_access, or raise if no profile exists yet.
     """
-    existing = await db["api_access"].find_one({"client_id": client_id})
-    if existing and existing.get("api_key"):
-        return existing["api_key"]
-    return generate_api_key()
+    key = await get_client_api_key(db, client_id)
+    if key:
+        return key
+    raise ValueError(
+        "Client has no API key. Create an API profile before assigning APIs."
+    )
+
+
+PROFILE_LOCKED_ACCESS_FIELDS = frozenset({
+    "api_key", "request_limit", "limit_frequency", "current_usage",
+})
+
+
+async def _find_existing_api_access(db, client_id, api_name: str) -> Optional[dict]:
+    """Return api_access row when this client already has the API assigned."""
+    oid = client_id if isinstance(client_id, ObjectId) else _oid(client_id)
+    return await db["api_access"].find_one({
+        "client_id": oid,
+        "api_name": api_name,
+    })
+
+
+async def _get_client_profile_limits(db, client_id) -> Dict[str, Any]:
+    """Return universal api_key and daily limit from the client API profile."""
+    oid = client_id if isinstance(client_id, ObjectId) else ObjectId(client_id)
+    client = await db["clients"].find_one({"_id": oid})
+    if not client:
+        raise ValueError("Client not found.")
+    api_key = client.get("api_key")
+    if not api_key:
+        raise ValueError(
+            "Client has no API key. Create an API profile before assigning APIs."
+        )
+    return {
+        "api_key": api_key,
+        "request_limit": int(client.get("request_limit", 10000) or 10000),
+        "limit_frequency": "Per Day",
+        "current_usage": int(client.get("current_usage", 0) or 0),
+    }
+
+
+async def _load_client_profiles_map(db, client_ids: List[ObjectId]) -> Dict[ObjectId, Dict[str, Any]]:
+    """Batch-load profile fields used to enrich api_access responses."""
+    if not client_ids:
+        return {}
+    profiles: Dict[ObjectId, Dict[str, Any]] = {}
+    cursor = db["clients"].find(
+        {"_id": {"$in": client_ids}, "api_key": {"$exists": True, "$ne": None}},
+        {"api_key": 1, "request_limit": 1, "current_usage": 1},
+    )
+    async for client in cursor:
+        profiles[client["_id"]] = {
+            "api_key": client["api_key"],
+            "request_limit": int(client.get("request_limit", 10000) or 10000),
+            "limit_frequency": "Per Day",
+            "current_usage": int(client.get("current_usage", 0) or 0),
+        }
+    return profiles
+
+
+def _apply_client_profile_to_access(serialized: Dict[str, Any], profile: Dict[str, Any]) -> Dict[str, Any]:
+    """Overlay universal profile key/limits onto an api_access record."""
+    if not profile:
+        return serialized
+    serialized["api_key"] = profile["api_key"]
+    serialized["request_limit"] = profile["request_limit"]
+    serialized["limit_frequency"] = profile["limit_frequency"]
+    serialized["current_usage"] = profile["current_usage"]
+    return serialized
+
+
+async def _enrich_api_access_doc(db, doc) -> Optional[Dict[str, Any]]:
+    if doc is None:
+        return None
+    serialized = _serialize(doc)
+    client_id = doc.get("client_id")
+    if not client_id:
+        return serialized
+    oid = client_id if isinstance(client_id, ObjectId) else ObjectId(client_id)
+    profiles = await _load_client_profiles_map(db, [oid])
+    return _apply_client_profile_to_access(serialized, profiles.get(oid, {}))
+
+
+async def _enrich_api_access_list(db, docs: List[dict]) -> List[Dict[str, Any]]:
+    if not docs:
+        return []
+    client_ids: List[ObjectId] = []
+    for doc in docs:
+        client_id = doc.get("client_id")
+        if client_id:
+            client_ids.append(
+                client_id if isinstance(client_id, ObjectId) else ObjectId(client_id)
+            )
+    profiles = await _load_client_profiles_map(db, list(set(client_ids)))
+    result = []
+    for doc in docs:
+        serialized = _serialize(doc)
+        client_id = doc.get("client_id")
+        if client_id:
+            oid = client_id if isinstance(client_id, ObjectId) else ObjectId(client_id)
+            serialized = _apply_client_profile_to_access(serialized, profiles.get(oid, {}))
+        result.append(serialized)
+    return result
 
 
 def _clean(doc):
@@ -94,9 +206,13 @@ class ClientService:
         Creates both a clients document and a linked client_users document
         (with the password hashed). Also logs an audit entry.
         """
-        # Prevent duplicate usernames
-        existing = await db["clients"].find_one({"username": data["username"].lower()})
+        # Prevent duplicate usernames (clients + login accounts)
+        username = data["username"].lower().strip()
+        existing = await db["clients"].find_one({"username": username})
         if existing:
+            raise ValueError("Username already exists.")
+        existing_user = await db["client_users"].find_one({"username": username})
+        if existing_user:
             raise ValueError("Username already exists.")
 
         now = datetime.now(timezone.utc)
@@ -168,27 +284,37 @@ class ClientService:
         )
         doc = await db["clients"].find_one({"_id": _oid(client_id)})
         await sync_user_mapping(db, _oid(client_id))
+        if doc and doc.get("api_key"):
+            await sync_redis_client_profile(db, _oid(client_id))
         return _serialize(doc)
 
     async def delete_client(self, db, client_id: str):
         """Permanently delete a client from the database."""
-        # Delete the client
-        result = await db["clients"].delete_one({"_id": _oid(client_id)})
-        
+        oid = _oid(client_id)
+        client_doc = await db["clients"].find_one({"_id": oid})
+        if not client_doc:
+            raise ValueError("Client not found")
+
+        api_key = client_doc.get("api_key")
+
+        result = await db["clients"].delete_one({"_id": oid})
         if result.deleted_count == 0:
             raise ValueError("Client not found")
         
         # Also delete associated client users
-        await db["client_users"].delete_many({"client_id": _oid(client_id)})
+        await db["client_users"].delete_many({"client_id": oid})
         
         # Also delete associated API access records
-        await db["api_access"].delete_many({"client_id": _oid(client_id)})
+        await db["api_access"].delete_many({"client_id": oid})
         
         # Also delete associated API requests
-        await db["api_requests"].delete_many({"client_id": _oid(client_id)})
+        await db["api_requests"].delete_many({"client_id": oid})
 
         # Remove the derived user_mapping entry (client is being hard-deleted)
-        await db["user_mapping"].delete_one({"client_id": _oid(client_id)})
+        await db["user_mapping"].delete_one({"client_id": oid})
+
+        if api_key:
+            await delete_redis_client_profile(api_key)
         
         # Also delete associated activity records
         await db["activity_records"].delete_many({"client_id": _oid(client_id)})
@@ -207,14 +333,26 @@ class ClientService:
         return {"success": True, "message": "Client deleted successfully."}
 
     async def update_client_status(self, db, client_id: str, status: str):
-        """Update a client's status (Active/Inactive)."""
+        """Update a client's status (Active/Inactive) and mirror to Redis profile status."""
+        from app.services.redis_client_profile_service import (
+            REDIS_STATUS_ACTIVE,
+            REDIS_STATUS_INACTIVE,
+        )
+        profile_status = (
+            REDIS_STATUS_ACTIVE if status == "Active" else REDIS_STATUS_INACTIVE
+        )
         await db["clients"].update_one(
             {"_id": _oid(client_id)},
-            {"$set": {"status": status, "updated_at": datetime.now(timezone.utc)}}
+            {"$set": {
+                "status": status,
+                "api_profile_status": profile_status,
+                "updated_at": datetime.now(timezone.utc),
+            }},
         )
         # Sync derived mapping status
         from app.services.user_mapping_service import update_user_mapping_status
         await update_user_mapping_status(db, client_id, active=(status == "Active"))
+        await sync_redis_client_profile(db, _oid(client_id))
         return await db["clients"].find_one({"_id": _oid(client_id)})
 
     # ==================================================================
@@ -290,34 +428,41 @@ class ClientService:
         """Return all API access records for a specific client."""
         cursor = db["api_access"].find({"client_id": _oid(client_id)})
         docs = await cursor.to_list(length=None)
-        return [_serialize(d) for d in docs]
+        return await _enrich_api_access_list(db, docs)
 
     async def get_all_api_access(self, db):
         """Return all API access records (admin view)."""
         cursor = db["api_access"].find()
         docs = await cursor.to_list(length=None)
-        return [_serialize(d) for d in docs]
+        return await _enrich_api_access_list(db, docs)
 
     async def get_api_access_by_id(self, db, access_id: str):
         """Return a single API access record by ID."""
         doc = await db["api_access"].find_one({"_id": _oid(access_id)})
-        return _serialize(doc)
+        return await _enrich_api_access_doc(db, doc)
 
     async def assign_api(self, db, data: dict):
         """
         Assign an API to a client.
 
-        Creates an api_access document with a new API key and the
-        specified pricing/limit configuration. Reconciles any pending
-        api_request for the same client/API, or creates an approved
-        api_request record when the admin assigns directly.
+        Creates an api_access document using the client's universal API key
+        and profile request limit. Reconciles any pending api_request for
+        the same client/API, or creates an approved api_request record when
+        the admin assigns directly.
         """
         now = datetime.now(timezone.utc)
         client_id = _oid(data["client_id"])
+        api_name = data["api_name"]
 
-        # ONE access key per client — reuse the existing key if the client
-        # already has one, otherwise generate a new one.
-        api_key = await _get_or_create_client_key(db, client_id)
+        existing = await _find_existing_api_access(db, client_id, api_name)
+        if existing:
+            enriched = await _enrich_api_access_doc(db, existing)
+            return enriched | {
+                "id": str(existing["_id"]),
+                "already_assigned": True,
+            }
+
+        profile = await _get_client_profile_limits(db, client_id)
 
         # Default prices if not provided
         success_price = data.get("success_price_per_hit", data.get("price_per_hit", 0.5))
@@ -325,24 +470,35 @@ class ClientService:
 
         doc = {
             "client_id": client_id,
-            "api_name": data["api_name"],
+            "api_name": api_name,
             "status": data.get("status", "Active"),
-            "api_key": api_key,
+            "api_key": profile["api_key"],
             "price_per_hit": success_price,
             "success_price_per_hit": success_price,
             "not_found_price_per_hit": not_found_price,
             "currency": data.get("currency", "INR"),
-            "request_limit": data.get("request_limit", 10000),
-            "limit_frequency": data.get("limit_frequency", "Per Day"),
-            "current_usage": 0,
+            "request_limit": profile["request_limit"],
+            "limit_frequency": profile["limit_frequency"],
+            "current_usage": profile["current_usage"],
             "expiry_date": data.get("expiry_date"),
             "assigned_at": now,
             "assigned_by": data.get("assigned_by", "admin"),
             "updated_at": now,
         }
-        result = await db["api_access"].insert_one(doc)
+        try:
+            result = await db["api_access"].insert_one(doc)
+        except DuplicateKeyError:
+            race_existing = await _find_existing_api_access(db, client_id, api_name)
+            if race_existing:
+                enriched = await _enrich_api_access_doc(db, race_existing)
+                return enriched | {
+                    "id": str(race_existing["_id"]),
+                    "already_assigned": True,
+                }
+            raise ValueError(
+                f"API '{api_name}' is already assigned to this client."
+            )
 
-        api_name = data["api_name"]
         assigned_by = data.get("assigned_by", "admin")
 
         # Reconcile any existing pending client requests for this API
@@ -395,12 +551,52 @@ class ClientService:
 
         # Keep the derived user_mapping in sync (assigned APIs + access key)
         await sync_user_mapping(db, client_id)
+        await sync_redis_api_list(db, client_id)
 
-        return _serialize(doc) | {"id": str(result.inserted_id)}
+        doc["_id"] = result.inserted_id
+        enriched = await _enrich_api_access_doc(db, doc)
+        return enriched | {"id": str(result.inserted_id)}
+
+    async def create_api_profile(self, db, client_id: str, request_limit: int, assigned_by: str = "admin"):
+        """Create universal API key + Redis profile for a client."""
+        return await create_client_api_profile(db, client_id, request_limit, assigned_by)
+
+    async def update_api_profile_limit(self, db, client_id: str, request_limit: int):
+        """Update client daily request limit in MongoDB and Redis."""
+        return await update_client_request_limit(db, client_id, request_limit)
+
+    async def update_api_profile(
+        self,
+        db,
+        client_id: str,
+        request_limit=None,
+        api_key=None,
+        status=None,
+    ):
+        """Update request limit, API key, and/or Redis profile status."""
+        if request_limit is None and api_key is None and status is None:
+            raise ValueError("Provide request_limit, api_key, or status to update.")
+        if request_limit is not None:
+            await update_client_request_limit(db, client_id, request_limit)
+        if api_key is not None:
+            await update_client_api_key(db, client_id, api_key)
+        if status is not None:
+            await update_client_api_profile_status(db, client_id, status)
+        return await build_client_api_profile(db, client_id)
+
+    async def get_api_profile(self, db, client_id: str):
+        """Return client API profile fields merged from MongoDB and Redis."""
+        try:
+            return await build_client_api_profile(db, client_id)
+        except ValueError:
+            return None
 
     async def update_api_access(self, db, access_id: str, data: dict):
-        """Update an API access record (pricing, limits, status, etc.)."""
-        update_data = {k: v for k, v in data.items() if v is not None and k != "id"}
+        """Update per-API pricing/status. Key and limits are profile-level only."""
+        update_data = {
+            k: v for k, v in data.items()
+            if v is not None and k != "id" and k not in PROFILE_LOCKED_ACCESS_FIELDS
+        }
         update_data["updated_at"] = datetime.now(timezone.utc)
 
         # Ensure price_per_hit stays in sync with success_price_per_hit
@@ -411,8 +607,10 @@ class ClientService:
             {"_id": _oid(access_id)}, {"$set": update_data}
         )
         doc = await db["api_access"].find_one({"_id": _oid(access_id)})
-        await sync_user_mapping(db, doc["client_id"]) if doc and doc.get("client_id") else None
-        return _serialize(doc)
+        if doc and doc.get("client_id"):
+            await sync_user_mapping(db, doc["client_id"])
+            await sync_redis_api_list(db, doc["client_id"])
+        return await _enrich_api_access_doc(db, doc)
 
     async def regenerate_api_key(self, db, access_id: str):
         """
@@ -426,8 +624,15 @@ class ClientService:
         if not existing:
             raise ValueError("API access record not found.")
         client_id = existing["client_id"]
+        client_doc = await db["clients"].find_one({"_id": client_id})
+        old_key = (client_doc or {}).get("api_key") or existing.get("api_key")
         new_key = generate_api_key()
         now = datetime.now(timezone.utc)
+
+        await db["clients"].update_one(
+            {"_id": client_id},
+            {"$set": {"api_key": new_key, "updated_at": now}},
+        )
 
         # Update every api_access record belonging to this client
         await db["api_access"].update_many(
@@ -435,9 +640,13 @@ class ClientService:
             {"$set": {"api_key": new_key, "updated_at": now}}
         )
 
+        if old_key:
+            await delete_redis_client_profile(old_key)
+
         # Sync the derived mapping's access key
         from app.services.user_mapping_service import update_user_mapping_access_key
         await update_user_mapping_access_key(db, str(client_id), new_key)
+        await sync_redis_client_profile(db, client_id)
 
         await db["audit_logs"].insert_one({
             "admin_username": "admin",
@@ -454,6 +663,7 @@ class ClientService:
         # Keep user_mapping in sync (removed API)
         if existing and existing.get("client_id"):
             await sync_user_mapping(db, existing["client_id"])
+            await sync_redis_api_list(db, existing["client_id"])
         return {"success": True, "message": "API access removed."}
 
     # ==================================================================
@@ -551,33 +761,45 @@ class ClientService:
             {"$set": {"status": "Approved", "reviewed_at": now}}
         )
 
-        # Create the api_access record (reuse the client's single access key)
+        # Create the api_access record using the client's universal profile key/limits
         client_id = req["client_id"]
-        api_key = await _get_or_create_client_key(db, client_id)
+        api_name = req["api_name"]
+        existing_access = await _find_existing_api_access(db, client_id, api_name)
+        if existing_access:
+            await sync_user_mapping(db, client_id)
+            await sync_redis_api_list(db, client_id)
+            return _serialize(req) | {"id": str(req["_id"]), "already_assigned": True}
+
+        profile = await _get_client_profile_limits(db, client_id)
         access_doc = {
             "client_id": client_id,
-            "api_name": req["api_name"],
+            "api_name": api_name,
             "status": config.get("status", "Active"),
-            "api_key": api_key,
+            "api_key": profile["api_key"],
             "price_per_hit": config.get("success_price_per_hit", config.get("price_per_hit", 0.5)),
             "success_price_per_hit": config.get("success_price_per_hit", 0.5),
             "not_found_price_per_hit": config.get("not_found_price_per_hit", 0.5),
             "currency": config.get("currency", "INR"),
-            "request_limit": config.get("request_limit", 10000),
-            "limit_frequency": config.get("limit_frequency", "Per Day"),
-            "current_usage": 0,
+            "request_limit": profile["request_limit"],
+            "limit_frequency": profile["limit_frequency"],
+            "current_usage": profile["current_usage"],
             "expiry_date": config.get("expiry_date"),
             "assigned_at": now,
             "assigned_by": "admin",
             "updated_at": now,
         }
-        await db["api_access"].insert_one(access_doc)
+        try:
+            await db["api_access"].insert_one(access_doc)
+        except DuplicateKeyError:
+            await sync_user_mapping(db, client_id)
+            await sync_redis_api_list(db, client_id)
+            return _serialize(req) | {"id": str(req["_id"]), "already_assigned": True}
 
         # Audit: client-level
         await db["client_audit"].insert_one({
             "client_id": req["client_id"],
             "action": "API Approved",
-            "details": f"API '{req['api_name']}' access approved and assigned.",
+            "details": f"API '{api_name}' access approved and assigned.",
             "admin_username": "admin",
             "timestamp": now,
         })
@@ -586,7 +808,7 @@ class ClientService:
         await db["audit_logs"].insert_one({
             "admin_username": "admin",
             "action": "API Request Approved",
-            "details": f"Approved access to '{req['api_name']}' for client {req['client_id']}.",
+            "details": f"Approved access to '{api_name}' for client {req['client_id']}.",
             "timestamp": now,
         })
 
@@ -603,6 +825,7 @@ class ClientService:
 
         # Keep the derived user_mapping in sync (assigned APIs + access key)
         await sync_user_mapping(db, client_id)
+        await sync_redis_api_list(db, client_id)
 
         return {"success": True, "message": "API request approved and access assigned."}
 

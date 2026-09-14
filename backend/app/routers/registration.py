@@ -75,7 +75,7 @@ async def create_registration_request(
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="client_id and company_name are required",
-        )
+        )     
 
     from bson import ObjectId
 

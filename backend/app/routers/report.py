@@ -54,8 +54,7 @@ async def get_client_usage_report(
     collections, mapped by the client's API key (access_key), whenever a
     client is in scope. Falls back to `usage_reports` for unscoped admin
     queries.
-
-    Query params:
+        - Query params:
         - client_id: Optional client filter
         - date_range: today | week | month | year | all
         - start_date: ISO date (for custom range)
@@ -165,7 +164,7 @@ async def get_report_table(
     return result
 
 
-@router.post(
+@router.post(                             
     "/export",
     responses={401: {"model": ErrorResponse}},
 )

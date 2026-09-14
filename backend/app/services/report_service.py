@@ -148,8 +148,7 @@ class ReportService:
         collections by matching `access_key` (the client's real API key) +
         created_time string window, per calendar day and status bucket.
 
-        Response codes: 101 -> success | 103 -> not_found |
-                        110 (and anything else) -> failed.
+        Response codes: 100/101 -> success | 103 -> not_found | 110 -> failed.
         Cost/revenue is derived from the client's api_access pricing.
         """
         if not client_id:
@@ -202,12 +201,14 @@ class ReportService:
                 cnt = int(g.get("count", 0))
                 row = day_map.setdefault(
                     date, {"success": 0, "failed": 0, "not_found": 0, "cost": 0.0})
-                if code in ("101", "200"):
+                if code in ("100", "101", "200"):
                     row["success"] += cnt
                     row["cost"] += cnt * sp
                 elif code == "103":
                     row["not_found"] += cnt
                     row["cost"] += cnt * np
+                elif code == "110":
+                    row["failed"] += cnt
                 else:
                     row["failed"] += cnt
 
@@ -308,10 +309,12 @@ class ReportService:
             for g in d.get("by_code", []):
                 code = str(g.get("_id", "")).strip()
                 cnt = int(g.get("count", 0))
-                if code in ("101", "200"):
+                if code in ("100", "101", "200"):
                     ainfo["success"] += cnt
                 elif code == "103":
                     ainfo["not_found"] += cnt
+                elif code == "110":
+                    ainfo["failed"] += cnt
                 else:
                     ainfo["failed"] += cnt
             for g in d.get("by_date", []):

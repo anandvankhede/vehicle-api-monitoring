@@ -1,4 +1,6 @@
 import { api } from './apiClient';
+import { cacheKey, DASHBOARD_CACHE_TTL, getOrFetch, getStaleWhileRevalidate } from './dashboardCache';
+import { dashboardService } from './dashboardService';
 import type {
   ClientAnalyticsData,
 } from '../types/clientAnalytics';
@@ -13,9 +15,23 @@ export const clientAnalyticsService = {
     sortBy: string = 'totalHits',
     sortOrder: string = 'desc',
     _startDate?: string,
-    _endDate?: string
+    _endDate?: string,
+    silent = false,
+    onUpdate?: (data: ClientAnalyticsData) => void,
   ): Promise<ClientAnalyticsData> {
-    try {
+    const key = cacheKey({
+      clientAnalytics: 1,
+      clientId,
+      apiId,
+      timeFilter,
+      statusFilter,
+      searchQuery,
+      sortBy,
+      sortOrder,
+      startDate: _startDate,
+      endDate: _endDate,
+    });
+    const fetcher = async () => {
       const result = await api.getClientAnalytics({
         clientId: clientId !== 'all' ? clientId : undefined,
         apiId: apiId !== 'all' ? apiId : undefined,
@@ -28,6 +44,12 @@ export const clientAnalyticsService = {
         endDate: _endDate,
       });
       return result as ClientAnalyticsData;
+    };
+    try {
+      if (silent) {
+        return getStaleWhileRevalidate(key, DASHBOARD_CACHE_TTL.analytics, fetcher, onUpdate);
+      }
+      return await getOrFetch(key, DASHBOARD_CACHE_TTL.analytics, fetcher);
     } catch {
       return {
         records: [],
@@ -39,17 +61,8 @@ export const clientAnalyticsService = {
   },
 
   async getAvailableApis(clientId: string = 'all'): Promise<{ id: string; name: string; category: string }[]> {
-    try {
-      const result = await api.getDashboardApis(clientId);
-      const list = Array.isArray(result) ? result : [];
-      return list.map((a: { id: string; name: string; category?: string }) => ({
-        id: a.id,
-        name: a.name,
-        category: a.category ?? 'vehicle',
-      }));
-    } catch {
-      return [];
-    }
+    const apis = await dashboardService.getAvailableApis(clientId);
+    return apis.map((a) => ({ id: a.id, name: a.name, category: a.category }));
   },
 
   async exportDetailReport(params: {

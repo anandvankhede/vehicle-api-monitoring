@@ -1,4 +1,5 @@
 import { api } from './apiClient';
+import { cacheKey, DASHBOARD_CACHE_TTL, getOrFetch, getStaleWhileRevalidate } from './dashboardCache';
 import type { ApiTimeFilterValue } from '../types/dashboard';
 import type { ClientApiDetail, ClientDetailsData } from '../types/detailsChart';
 
@@ -12,15 +13,31 @@ export const detailsChartService = {
     startDate?: string,
     endDate?: string,
     apiId?: string,
+    silent = false,
+    onUpdate?: (data: ClientDetailsData) => void,
   ): Promise<ClientDetailsData> {
-    const result = await api.getClientDetails(
+    const key = cacheKey({
+      clientDetails: 1,
       clientId,
       timeFilter,
       startDate,
       endDate,
       apiId,
-    );
-    return result as ClientDetailsData;
+    });
+    const fetcher = async () => {
+      const result = await api.getClientDetails(
+        clientId,
+        timeFilter,
+        startDate,
+        endDate,
+        apiId,
+      );
+      return result as ClientDetailsData;
+    };
+    if (silent) {
+      return getStaleWhileRevalidate(key, DASHBOARD_CACHE_TTL.analytics, fetcher, onUpdate);
+    }
+    return getOrFetch(key, DASHBOARD_CACHE_TTL.analytics, fetcher);
   },
 
   /**

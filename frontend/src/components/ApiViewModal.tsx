@@ -19,6 +19,7 @@ export interface ApiInfoItem {
   documentation?: string;
   response_collection?: string;
   response_db_status?: 'live' | 'pending';
+  redis_api_key?: string;
   created_at?: string;
   updated_at?: string;
 }
@@ -209,6 +210,12 @@ export const ApiViewModal: React.FC<ApiViewModalProps> = ({ open, onClose, api }
                 <div className="flex items-center justify-between py-1.5 border-b" style={{ borderColor: 'var(--border)' }}>
                   <span className="text-xs" style={{ color: 'var(--text-muted)' }}>API Name</span>
                   <span className="text-xs font-medium" style={{ color: 'var(--text-primary)' }}>{api.name}</span>
+                </div>
+                <div className="flex items-center justify-between py-1.5 border-b" style={{ borderColor: 'var(--border)' }}>
+                  <span className="text-xs" style={{ color: 'var(--text-muted)' }}>Redis API Key</span>
+                  <code className="text-xs font-mono" style={{ color: 'var(--text-primary)' }}>
+                    {api.redis_api_key || api.name}
+                  </code>
                 </div>
                 <div className="flex items-center justify-between py-1.5 border-b" style={{ borderColor: 'var(--border)' }}>
                   <span className="text-xs" style={{ color: 'var(--text-muted)' }}>Method</span>

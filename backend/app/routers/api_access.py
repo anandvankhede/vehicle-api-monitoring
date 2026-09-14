@@ -53,7 +53,11 @@ async def list_api_access(
 
 @router.post(
     "",
-    responses={400: {"model": ErrorResponse}, 401: {"model": ErrorResponse}},
+    responses={
+        400: {"model": ErrorResponse},
+        401: {"model": ErrorResponse},
+        409: {"model": ErrorResponse},
+    },
 )
 async def assign_api(
     body: ApiAccessCreate,
@@ -83,10 +87,13 @@ async def assign_api(
         result = await client_service.assign_api(db, body.model_dump())
         return result
     except ValueError as e:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail=str(e),
+        msg = str(e)
+        status_code = (
+            status.HTTP_409_CONFLICT
+            if "already assigned" in msg.lower()
+            else status.HTTP_400_BAD_REQUEST
         )
+        raise HTTPException(status_code=status_code, detail=msg)
 
 
 @router.get(
@@ -160,12 +167,8 @@ async def update_api_access(
     _=Depends(get_current_admin),
 ):
     """
-    Update an API access record (pricing, limits, status, expiry).
-
-    Body (all optional):
-        - success_price_per_hit, not_found_price_per_hit, price_per_hit
-        - currency, request_limit, limit_frequency
-        - status, expiry_date, api_key
+    Update per-API pricing and status. API key and request limits are managed
+    via the client API Access Profile (PUT /clients/{id}/api-profile).
     """
     result = await client_service.update_api_access(db, access_id, body.model_dump(exclude_unset=True))
     if result is None:

@@ -68,20 +68,7 @@ async def get_dashboard_analytics(
         - userOptions: List of clients for the global filter
         - apiOptions: List of APIs for the monitoring dropdown
     """
-    summary = await dashboard_service.get_dashboard_stats(db, response_db=response_db)
-    user_options = await dashboard_service.get_user_options(db)
-    api_options = await dashboard_service.get_api_options(db, response_db=response_db)
-
-    return {
-        "summary": {
-            "totalClients": summary["total_clients"],
-            "totalApis": summary["total_apis"],
-            "healthyApisCount": summary["healthy_apis_count"],
-            "degradedApisCount": summary["degraded_apis_count"],
-        },
-        "userOptions": user_options,
-        "apiOptions": api_options,
-    }
+    return await dashboard_service.get_dashboard_bootstrap(db, response_db=response_db)
 
 
 @router.get(
@@ -102,7 +89,6 @@ async def get_dashboard_users(
         - type: "enterprise" | "pro" | "standard"
     """
     options = await dashboard_service.get_user_options(db)
-    # Prepend the "All Users" option
     return [
         {"id": "all", "name": "All Users", "code": "ALL_CLIENTS", "type": "enterprise"},
         *options,
@@ -161,7 +147,8 @@ async def get_user_api_stats(
         time_filter = "today"
     try:
         return await analytics.get_user_api_stats(
-            response_db, db, client_id, time_filter, start_date, end_date)
+            response_db, db, client_id, time_filter, start_date, end_date,
+        )
     except HTTPException:
         raise
     except Exception as e:
@@ -191,14 +178,14 @@ async def get_api_usage(
     """
     try:
         return await analytics.get_api_usage_stats(
-            response_db, db, api_id, time_filter, start_date, end_date, client_id)
+            response_db, db, api_id, time_filter, start_date, end_date, client_id,
+        )
     except ValueError as e:
         raise HTTPException(status_code=404, detail=str(e))
     except HTTPException:
         raise
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
-
 
 
 @router.get(
@@ -229,7 +216,7 @@ async def get_client_analytics(
     search_query: str = Query(""),
     sort_by: str = Query("totalHits"),
     sort_order: str = Query("desc"),
-        start_date: Optional[str] = Query(None),
+    start_date: Optional[str] = Query(None),
     end_date: Optional[str] = Query(None),
     db=Depends(get_database),
     response_db=Depends(get_response_database),

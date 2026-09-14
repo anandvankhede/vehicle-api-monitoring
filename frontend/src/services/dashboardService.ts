@@ -1,4 +1,11 @@
 import { api } from './apiClient';
+import {
+  cacheKey,
+  DASHBOARD_CACHE_TTL,
+  getOrFetch,
+  getStaleWhileRevalidate,
+  setCached,
+} from './dashboardCache';
 import type {
   DashboardSummary,
   UserOption,
@@ -47,114 +54,155 @@ function normalizeApiMonitoringStats(
   };
 }
 
+const toApiOption = (a: { id: string; name: string; category?: string }): ApiOption => ({
+  id: a.id,
+  name: a.name,
+  category: a.category ?? 'vehicle',
+});
+
+const normalizeApiList = (raw: unknown): ApiOption[] => {
+  if (!Array.isArray(raw)) return [];
+  return raw
+    .filter((item): item is { id: string; name: string; category?: string } =>
+      Boolean(item && typeof item === 'object' && 'id' in item && 'name' in item))
+    .map(toApiOption);
+};
+
+const ALL_USERS_OPTION: UserOption = {
+  id: 'all',
+  name: 'All Users',
+  code: 'ALL_CLIENTS',
+  type: 'enterprise',
+};
+
 export const dashboardService = {
-  /**
-   * Fetch top header summary stats (Total Clients, Total APIs)
-   */
-  async getDashboardSummary(): Promise<DashboardSummary> {
-    try {
-      const stats = await api.getDashboardStats() as DashboardSummary;
-      return {
-        totalClients: stats.totalClients ?? 0,
-        totalApis: stats.totalApis ?? 0,
-        healthyApisCount: stats.healthyApisCount ?? 0,
-        degradedApisCount: stats.degradedApisCount ?? 0,
-        responseDbAvailable: stats.responseDbAvailable,
+  /** Bootstrap: stats + users + APIs in one request (cached in browser). */
+  async getBootstrap(): Promise<{
+    summary: DashboardSummary;
+    users: UserOption[];
+    apis: ApiOption[];
+  }> {
+    return getOrFetch('bootstrap', DASHBOARD_CACHE_TTL.bootstrap, async () => {
+      const raw = await api.getDashboardAnalytics() as {
+        summary?: DashboardSummary;
+        userOptions?: UserOption[];
+        apiOptions?: ApiOption[];
       };
-    } catch {
-      try {
-        const [clients, apis] = await Promise.all([
-          api.getClients().catch(() => ({ data: [], total: 0 })),
-          api.getApiInfo().catch(() => ({ data: [], total: 0 })),
-        ]);
-        return {
-          totalClients: clients.total,
-          totalApis: apis.total,
-          healthyApisCount: apis.total,
-          degradedApisCount: 0,
-        };
-      } catch {
-        return { totalClients: 0, totalApis: 0, healthyApisCount: 0, degradedApisCount: 0 };
-      }
-    }
+
+      const summary = raw.summary ?? {
+        totalClients: 0,
+        totalApis: 0,
+        healthyApisCount: 0,
+        degradedApisCount: 0,
+      };
+
+      const users = [ALL_USERS_OPTION, ...(raw.userOptions ?? [])];
+      const apis = normalizeApiList(raw.apiOptions ?? []);
+
+      setCached('users', users, DASHBOARD_CACHE_TTL.users);
+      setCached(cacheKey({ apis: 1, clientId: 'all' }), apis, DASHBOARD_CACHE_TTL.apis);
+
+      return { summary, users, apis };
+    });
   },
 
-  /**
-   * Fetch list of users for the global filter (sourced from user_mapping).
-   * The backend already prepends the "All Users" option and returns
-   * {id, name, code, type} records.
-   */
+  async getDashboardSummary(): Promise<DashboardSummary> {
+    const bootstrap = await this.getBootstrap();
+    return bootstrap.summary;
+  },
+
   async getUsers(): Promise<UserOption[]> {
-    try {
-      const result = await api.getDashboardUsers();
-      return result as UserOption[];
-    } catch {
-      return [{ id: 'all', name: 'All Users', code: 'ALL_CLIENTS', type: 'enterprise' }];
-    }
+    return getOrFetch('users', DASHBOARD_CACHE_TTL.users, async () => {
+      try {
+        const result = await api.getDashboardUsers();
+        return result as UserOption[];
+      } catch {
+        const bootstrap = await this.getBootstrap().catch(() => null);
+        if (bootstrap?.users.length) return bootstrap.users;
+        return [ALL_USERS_OPTION];
+      }
+    });
   },
 
-  /**
-   * Fetch user API KPI grid statistics based on selected User and Time Filter
-   */
   async getUserApiStats(
     userId: string = 'all',
     timeFilter: TimeFilterValue = 'last_7_days',
-    _startDate?: string,
-    _endDate?: string
+    startDate?: string,
+    endDate?: string,
+    silent = false,
   ): Promise<UserApiStats[]> {
-    try {
-      const result = await api.getUserApiStats(userId, timeFilter, _startDate, _endDate);
+    const key = cacheKey({
+      userApiStats: 1,
+      userId,
+      timeFilter,
+      startDate,
+      endDate,
+    });
+    const fetcher = async () => {
+      const result = await api.getUserApiStats(userId, timeFilter, startDate, endDate);
       return result as UserApiStats[];
+    };
+    if (silent) {
+      return getStaleWhileRevalidate(key, DASHBOARD_CACHE_TTL.analytics, fetcher);
+    }
+    try {
+      return await getOrFetch(key, DASHBOARD_CACHE_TTL.analytics, fetcher);
     } catch {
       return [];
     }
   },
 
-  /**
-   * Fetch APIs for Main API Monitoring — scoped by user filter.
-   * All users: every catalog API. Specific client: that client's assigned APIs.
-   */
   async getAvailableApis(clientId: string = 'all'): Promise<ApiOption[]> {
-    const toOption = (a: { id: string; name: string; category?: string }): ApiOption => ({
-      id: a.id,
-      name: a.name,
-      category: a.category ?? 'vehicle',
-    });
-
-    const normalizeList = (raw: unknown): ApiOption[] => {
-      if (Array.isArray(raw)) {
-        return raw
-          .filter((item): item is { id: string; name: string; category?: string } =>
-            Boolean(item && typeof item === 'object' && 'id' in item && 'name' in item))
-          .map(toOption);
+    const key = cacheKey({ apis: 1, clientId });
+    return getOrFetch(key, DASHBOARD_CACHE_TTL.apis, async () => {
+      try {
+        const dashboardApis = await api.getDashboardApis(clientId);
+        return normalizeApiList(dashboardApis);
+      } catch (err) {
+        console.warn('Failed to load scoped dashboard APIs:', err);
+        if (clientId === 'all') {
+          const bootstrap = await this.getBootstrap().catch(() => null);
+          if (bootstrap?.apis.length) return bootstrap.apis;
+        }
+        return [];
       }
-      return [];
-    };
-
-    try {
-      const dashboardApis = await api.getDashboardApis(clientId);
-      return normalizeList(dashboardApis);
-    } catch (err) {
-      console.warn('Failed to load scoped dashboard APIs:', err);
-      return [];
-    }
+    });
   },
 
-  /**
-   * Fetch detailed global monitoring statistics for a specific API and timeframe
-   */
   async getApiMonitoringStats(
     apiId: string = '',
     timeFilter: ApiTimeFilterValue = 'last_7_days',
     startDate?: string,
     endDate?: string,
     clientId: string = 'all',
+    silent = false,
+    onUpdate?: (stats: ApiMonitoringStats) => void,
   ): Promise<ApiMonitoringStats> {
-    const result = await api.getDashboardApiUsage(apiId, timeFilter, startDate, endDate, clientId);
-    return normalizeApiMonitoringStats(
-      result as Record<string, unknown>,
+    const key = cacheKey({
+      apiUsage: 1,
       apiId,
-      timeFilter
-    );
+      clientId,
+      timeFilter,
+      startDate,
+      endDate,
+    });
+    const fetcher = async () => {
+      const result = await api.getDashboardApiUsage(
+        apiId,
+        timeFilter,
+        startDate,
+        endDate,
+        clientId,
+      );
+      return normalizeApiMonitoringStats(
+        result as Record<string, unknown>,
+        apiId,
+        timeFilter,
+      );
+    };
+    if (silent) {
+      return getStaleWhileRevalidate(key, DASHBOARD_CACHE_TTL.analytics, fetcher, onUpdate);
+    }
+    return getOrFetch(key, DASHBOARD_CACHE_TTL.analytics, fetcher);
   },
 };

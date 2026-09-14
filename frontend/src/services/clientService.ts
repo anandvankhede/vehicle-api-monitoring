@@ -236,30 +236,30 @@ const clientService = {
   async assignApi(
     clientId: string,
     apiName: string,
-    requestLimit: number,
-    frequency: RequestLimitFrequency,
     pricePerHit: number,
     currency: Currency,
     assignedBy: string = 'admin',
     successPrice?: number,
     notFoundPrice?: number
-  ): Promise<boolean> {
+  ): Promise<{ success: boolean; error?: string; alreadyAssigned?: boolean }> {
     try {
-      await api.assignApi({
+      const result = await api.assignApi({
         client_id: clientId,
         api_name: apiName,
-        request_limit: requestLimit,
-        limit_frequency: frequency,
         price_per_hit: successPrice ?? pricePerHit,
         success_price_per_hit: successPrice ?? pricePerHit,
         not_found_price_per_hit: notFoundPrice ?? pricePerHit,
         currency,
         assigned_by: assignedBy,
-      });
+      }) as ClientApiAccess & { already_assigned?: boolean };
       await this.loadAllData();
-      return true;
-    } catch {
-      return false;
+      return {
+        success: true,
+        alreadyAssigned: Boolean(result.already_assigned),
+      };
+    } catch (err) {
+      const message = err instanceof Error ? err.message : 'Failed to assign API.';
+      return { success: false, error: message };
     }
   },
 
@@ -274,7 +274,7 @@ const clientService = {
 
   updateApiAccess(
     accessId: string,
-    updates: Partial<Pick<ClientApiAccess, 'api_key' | 'request_limit' | 'limit_frequency' | 'current_usage' | 'status' | 'expiry_date' | 'price_per_hit' | 'currency' | 'success_price_per_hit' | 'not_found_price_per_hit'>>,
+    updates: Partial<Pick<ClientApiAccess, 'status' | 'expiry_date' | 'price_per_hit' | 'currency' | 'success_price_per_hit' | 'not_found_price_per_hit'>>,
     _adminUsername: string = 'admin'
   ): boolean {
     api.updateApiAccess(accessId, updates).then(
@@ -360,6 +360,49 @@ const clientService = {
     } catch {
       return undefined;
     }
+  },
+
+  async createClientAdmin(data: {
+    company_name: string;
+    username: string;
+    password: string;
+    address: string;
+    gstin: string;
+    pan: string;
+    email: string;
+    phone: string;
+  }): Promise<Client> {
+    const client = await api.createClient({
+      ...data,
+      selected_apis: [],
+      comments: '',
+      request_status: 'Approved',
+      status: 'Active',
+    });
+    syncCache.clients = [
+      client,
+      ...syncCache.clients.filter((c) => c.id !== client.id),
+    ];
+    return client;
+  },
+
+  async getClientApiProfile(clientId: string) {
+    try {
+      return await api.getClientApiProfile(clientId);
+    } catch {
+      return null;
+    }
+  },
+
+  async createClientApiProfile(clientId: string, requestLimit: number) {
+    return await api.createClientApiProfile(clientId, requestLimit);
+  },
+
+  async updateClientApiProfile(
+    clientId: string,
+    body: { request_limit?: number; api_key?: string; status?: 'active' | 'inactive' },
+  ) {
+    return await api.updateClientApiProfile(clientId, body);
   },
   async getClientApiAccessAsync(clientId: string, portal?: PortalType): Promise<ClientApiAccess[]> {
     const result = await api.getClientApiAccess(clientId, portal);

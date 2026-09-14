@@ -118,6 +118,31 @@ class Settings(BaseSettings):
             "as naive local timestamps in this zone."
         ),
     )
+    DASHBOARD_CATALOG_CACHE_SECONDS: int = Field(
+        default=120,
+        env="DASHBOARD_CATALOG_CACHE_SECONDS",
+        description=(
+            "TTL for in-process API catalog document cache used during analytics "
+            "aggregations. Dashboard response caching is handled in the frontend."
+        ),
+    )
+
+    # --- Redis (live API gateway client profiles) ---
+    REDIS_URL: Optional[str] = Field(
+        default=None,
+        env="REDIS_URL",
+        description="Redis URL for client:{api_key} profile hashes (e.g. redis://host:6384/0)",
+    )
+    REDIS_CLIENT_PROFILE_ENABLED: bool = Field(
+        default=True,
+        env="REDIS_CLIENT_PROFILE_ENABLED",
+        description="When false, skip all Redis client profile writes.",
+    )
+    REDIS_CLIENT_KEY_PREFIX: str = Field(
+        default="client:",
+        env="REDIS_CLIENT_KEY_PREFIX",
+        description="Redis key prefix for client profiles.",
+    )
 
     # --- JWT / Security ---
     SECRET_KEY: str = Field(
@@ -137,7 +162,8 @@ class Settings(BaseSettings):
     # Frontend URLs allowed to access the backend.
     # Accepts JSON array or comma-separated list.
     # On a VM, set PUBLIC_FRONTEND_URL to the browser URL, e.g. http://20.1.2.3:3000
-    FRONTEND_ORIGINS: List[str] = Field(
+    # Union[str, List[str]] avoids pydantic-settings JSON-decoding CSV env values before validation.
+    FRONTEND_ORIGINS: Union[str, List[str]] = Field(
         default=["http://localhost:5173", "http://localhost:3000"],
         validation_alias=AliasChoices("FRONTEND_ORIGINS", "CORS_ORIGINS"),
         description="Allowed frontend origins for CORS (JSON array or comma-separated)",
@@ -170,4 +196,4 @@ class Settings(BaseSettings):
 
 
 settings = Settings()
-
+

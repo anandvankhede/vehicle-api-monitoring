@@ -6,6 +6,7 @@ import {
 } from 'lucide-react';
 import { useClientAuth } from '../context/ClientAuthContext';
 import clientService from '../services/clientService';
+import { validateClientRegistration } from '../utils/clientRegistrationValidation';
 
 type AuthMode = 'login' | 'register';
 
@@ -93,23 +94,22 @@ export const ClientAuth: React.FC = () => {
     setError('');
     setSuccess('');
 
-    // Company details validation
-    if (!companyName.trim()) { setError('Company Name is required'); return; }
-    if (!address.trim()) { setError('Address is required'); return; }
-    if (!gstin.trim()) { setError('GSTIN is required'); return; }
-    if (gstin.trim().length !== 15) { setError('GSTIN must be 15 characters'); return; }
-    if (!pan.trim()) { setError('PAN is required'); return; }
-    if (pan.trim().length !== 10) { setError('PAN must be 10 characters'); return; }
-    if (!email.trim()) { setError('Email is required'); return; }
-    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email.trim())) { setError('Please enter a valid email address'); return; }
-    if (!phone.trim()) { setError('Phone is required'); return; }
-    if (phone.trim().length !== 10) { setError('Phone must be 10 digits'); return; }
-
-    // User credentials validation
-    if (!username.trim()) { setError('Username is required'); return; }
-    if (username.trim().length < 3) { setError('Username must be at least 3 characters'); return; }
-    if (password.length < 8) { setError('Password must contain at least 8 characters'); return; }
-    if (password !== confirmPassword) { setError('Passwords do not match'); return; }
+    const fieldErrors = validateClientRegistration({
+      company_name: companyName,
+      address,
+      gstin,
+      pan,
+      email,
+      phone,
+      username,
+      password,
+      confirm_password: confirmPassword,
+    }, { requireConfirmPassword: true });
+    const errorMessages = Object.values(fieldErrors);
+    if (errorMessages.length > 0) {
+      setError(errorMessages.join(' · '));
+      return;
+    }
 
     setIsSubmitting(true);
     try {

@@ -146,6 +146,29 @@ export function logout(clearDataOnly = false): void {
 // HTTP HELPERS
 // ============================================================================
 
+/** Turn FastAPI `detail` (string or validation array) into a readable message. */
+export function formatApiErrorDetail(detail: unknown): string {
+  if (typeof detail === 'string') return detail;
+  if (Array.isArray(detail)) {
+    return detail
+      .map((item) => {
+        if (typeof item === 'string') return item;
+        if (item && typeof item === 'object' && 'msg' in item) {
+          const loc = Array.isArray((item as { loc?: unknown }).loc)
+            ? (item as { loc: (string | number)[] }).loc
+                .filter((part) => part !== 'body')
+                .join('.')
+            : '';
+          const msg = String((item as { msg: string }).msg);
+          return loc ? `${loc}: ${msg}` : msg;
+        }
+        return String(item);
+      })
+      .join('; ');
+  }
+  return '';
+}
+
 /** Login/register endpoints return 401 for bad credentials — not expired sessions. */
 function isPublicAuthEndpoint(endpoint: string): boolean {
   return (
@@ -177,7 +200,7 @@ async function httpGet<T>(endpoint: string, portal?: PortalType): Promise<T> {
       }
       // Retry failed - throw error from retry response
       const error = await retryResponse.json().catch(() => ({}));
-      throw new Error(error.detail || `HTTP ${retryResponse.status}`);
+      throw new Error(formatApiErrorDetail(error.detail) || `HTTP ${retryResponse.status}`);
     } catch {
       handleAuthError(activePortal);
       throw new Error('Session expired. Please log in again.');
@@ -186,7 +209,7 @@ async function httpGet<T>(endpoint: string, portal?: PortalType): Promise<T> {
 
   if (!response.ok) {
     const error = await response.json().catch(() => ({}));
-    throw new Error(error.detail || `HTTP ${response.status}`);
+    throw new Error(formatApiErrorDetail(error.detail) || `HTTP ${response.status}`);
   }
   return response.json();
 }
@@ -215,7 +238,7 @@ async function httpPost<T, B = unknown>(endpoint: string, body?: B, portal?: Por
       }
       // Retry failed - throw error from retry response
       const error = await retryResponse.json().catch(() => ({}));
-      throw new Error(error.detail || `HTTP ${retryResponse.status}`);
+      throw new Error(formatApiErrorDetail(error.detail) || `HTTP ${retryResponse.status}`);
     } catch {
       handleAuthError(activePortal);
       throw new Error('Session expired. Please log in again.');
@@ -224,7 +247,7 @@ async function httpPost<T, B = unknown>(endpoint: string, body?: B, portal?: Por
 
   if (!response.ok) {
     const error = await response.json().catch(() => ({}));
-    throw new Error(error.detail || `HTTP ${response.status}`);
+    throw new Error(formatApiErrorDetail(error.detail) || `HTTP ${response.status}`);
   }
   return response.json();
 }
@@ -253,7 +276,7 @@ async function httpPut<T, B = unknown>(endpoint: string, body?: B, portal?: Port
       }
       // Retry failed - throw error from retry response
       const error = await retryResponse.json().catch(() => ({}));
-      throw new Error(error.detail || `HTTP ${retryResponse.status}`);
+      throw new Error(formatApiErrorDetail(error.detail) || `HTTP ${retryResponse.status}`);
     } catch {
       handleAuthError(activePortal);
       throw new Error('Session expired. Please log in again.');
@@ -262,7 +285,7 @@ async function httpPut<T, B = unknown>(endpoint: string, body?: B, portal?: Port
 
   if (!response.ok) {
     const error = await response.json().catch(() => ({}));
-    throw new Error(error.detail || `HTTP ${response.status}`);
+    throw new Error(formatApiErrorDetail(error.detail) || `HTTP ${response.status}`);
   }
   return response.json();
 }
@@ -289,7 +312,7 @@ async function httpDelete<T>(endpoint: string, portal?: PortalType): Promise<T> 
       }
       // Retry failed - throw error from retry response
       const error = await retryResponse.json().catch(() => ({}));
-      throw new Error(error.detail || `HTTP ${retryResponse.status}`);
+      throw new Error(formatApiErrorDetail(error.detail) || `HTTP ${retryResponse.status}`);
     } catch {
       handleAuthError(activePortal);
       throw new Error('Session expired. Please log in again.');
@@ -298,7 +321,7 @@ async function httpDelete<T>(endpoint: string, portal?: PortalType): Promise<T> 
 
   if (!response.ok) {
     const error = await response.json().catch(() => ({}));
-    throw new Error(error.detail || `HTTP ${response.status}`);
+    throw new Error(formatApiErrorDetail(error.detail) || `HTTP ${response.status}`);
   }
   return response.json();
 }
@@ -332,6 +355,15 @@ export const api = {
   getClientById: (id: string): Promise<Client> => httpGet(`/clients/${id}`),
   getCurrentClient: (): Promise<Client> => httpGet('/clients/me', 'client'),
   createClient: (body: unknown): Promise<Client> => httpPost('/clients', body),
+  getClientApiProfile: (clientId: string): Promise<import('../types/client').ClientApiProfile> =>
+    httpGet(`/clients/${clientId}/api-profile`),
+  createClientApiProfile: (clientId: string, requestLimit: number): Promise<import('../types/client').ClientApiProfile> =>
+    httpPost(`/clients/${clientId}/api-profile`, { request_limit: requestLimit }),
+  updateClientApiProfile: (
+    clientId: string,
+    body: { request_limit?: number; api_key?: string; status?: 'active' | 'inactive' },
+  ): Promise<import('../types/client').ClientApiProfile> =>
+    httpPut(`/clients/${clientId}/api-profile`, body),
   updateClient: (id: string, body: unknown): Promise<Client> => httpPut(`/clients/${id}`, body),
   deleteClient: (id: string): Promise<{ success: boolean }> => httpDelete(`/clients/${id}`),
   activateClient: (id: string): Promise<Client> => httpPost(`/clients/${id}/activate`),
@@ -397,7 +429,7 @@ export const api = {
 
     if (!response.ok) {
       const error = await response.json().catch(() => ({}));
-      throw new Error(error.detail || `HTTP ${response.status}`);
+      throw new Error(formatApiErrorDetail(error.detail) || `HTTP ${response.status}`);
     }
     return response.json();
   },
@@ -449,15 +481,23 @@ export const api = {
     if (endDate) searchParams.set('end_date', endDate);
     return httpGet(`/dashboard/user-api-stats?${searchParams.toString()}`);
   },
-  getDashboardApiUsage: (apiId: string, timeFilter: string = 'last_7_days', startDate?: string, endDate?: string, clientId: string = 'all') => {
+  getDashboardApiUsage: (
+    apiId: string,
+    timeFilter: string = 'last_7_days',
+    startDate?: string,
+    endDate?: string,
+    clientId: string = 'all',
+    forceRefresh = false,
+  ) => {
     const searchParams = new URLSearchParams();
     searchParams.set('api_id', apiId);
     searchParams.set('client_id', clientId);
     searchParams.set('time_filter', timeFilter);
     if (startDate) searchParams.set('start_date', startDate);
     if (endDate) searchParams.set('end_date', endDate);
+    if (forceRefresh) searchParams.set('_t', String(Date.now()));
     const query = searchParams.toString();
-    return httpGet(`/dashboard/api-usage?${query}&_t=${Date.now()}`);
+    return httpGet(`/dashboard/api-usage?${query}`);
   },
   getDashboardRecentActivity: () => httpGet('/dashboard/recent-activity'),
   getClientAnalytics: (params: {

@@ -18,6 +18,7 @@ from fastapi.responses import JSONResponse
 
 from app.config import settings
 from app.database import db_manager, ensure_app_indexes, verify_response_database
+from app.redis_client import redis_manager
 from app.routers import (
     auth,
     client,
@@ -152,6 +153,8 @@ async def startup():
     """Connect to MongoDB, check response DB (non-fatal), ensure app indexes."""
     print(f"[OK] CORS allowed origins: {', '.join(settings.FRONTEND_ORIGINS)}")
     db_manager.connect()
+    redis_manager.connect()
+    await redis_manager.verify()
     await verify_response_database()
     try:
         db = db_manager.get_db()
@@ -163,4 +166,5 @@ async def startup():
 @app.on_event("shutdown")
 async def shutdown():
     """Close MongoDB connection on shutdown."""
+    await redis_manager.close()
     db_manager.close()

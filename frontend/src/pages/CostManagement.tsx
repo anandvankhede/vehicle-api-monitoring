@@ -1,18 +1,15 @@
 import React, { useState, useEffect } from 'react';
 import {
   Search, Filter, Save, X, CheckCircle, AlertCircle,
-  Copy, Eye, EyeOff, RefreshCw, Pause, Play, Trash2,
+  Copy, Eye, EyeOff, Pause, Play, Trash2,
   BarChart3, Building2, Key,
 } from 'lucide-react';
 import { api } from '../services/apiClient';
-import clientService from '../services/clientService';
-import type { ClientApiAccess, Client, Currency, ClientApiStatus, RequestLimitFrequency, ApiRequest } from '../types/client';
+import type { ClientApiAccess, Client, Currency, ClientApiStatus, ApiRequest } from '../types/client';
 
 interface ApiAccessWithClient extends ClientApiAccess {
   client?: Client;
 }
-
-const frequencyOptions: RequestLimitFrequency[] = ['Per Minute', 'Per Hour', 'Per Day', 'Per Month', 'Per Year'];
 
 export const ApiSubscriptionManagement: React.FC = () => {
   const [apiAccessList, setApiAccessList] = useState<ApiAccessWithClient[]>([]);
@@ -26,6 +23,7 @@ export const ApiSubscriptionManagement: React.FC = () => {
   const [showKey, setShowKey] = useState(false);
   const [toast, setToast] = useState<{ message: string; type: 'success' | 'error' } | null>(null);
   const [showDeleteConfirm, setShowDeleteConfirm] = useState<ApiAccessWithClient | null>(null);
+  const [isLoading, setIsLoading] = useState(true);
 
   useEffect(() => {
     loadData();
@@ -40,6 +38,7 @@ export const ApiSubscriptionManagement: React.FC = () => {
 
   const loadData = async () => {
     try {
+      setIsLoading(true);
       const [clientsRes, accessRes, requestsRes] = await Promise.all([
         api.getClients(),
         api.getApiAccess(),
@@ -59,6 +58,8 @@ export const ApiSubscriptionManagement: React.FC = () => {
       setApiAccessList(allAccess);
     } catch (err) {
       console.error('Failed to load subscription data', err);
+    } finally {
+      setIsLoading(false);
     }
   };
 
@@ -81,8 +82,6 @@ export const ApiSubscriptionManagement: React.FC = () => {
       success_price_per_hit: drawerAccess.success_price_per_hit,
       not_found_price_per_hit: drawerAccess.not_found_price_per_hit,
       currency: drawerAccess.currency,
-      request_limit: drawerAccess.request_limit,
-      limit_frequency: drawerAccess.limit_frequency,
       status: drawerAccess.status,
     };
 
@@ -92,7 +91,7 @@ export const ApiSubscriptionManagement: React.FC = () => {
       setShowDrawer(false);
       setDrawerAccess(null);
       await loadData();
-    } catch (err) {
+    } catch {
       setToast({ message: 'Failed to update subscription', type: 'error' });
     }
   };
@@ -105,20 +104,8 @@ export const ApiSubscriptionManagement: React.FC = () => {
       setToast({ message: 'API subscription deleted successfully', type: 'success' });
       setShowDeleteConfirm(null);
       await loadData();
-    } catch (err) {
+    } catch {
       setToast({ message: 'Failed to delete subscription', type: 'error' });
-    }
-  };
-
-  const handleRegenerateKey = async () => {
-    if (!drawerAccess) return;
-    const newKey = await clientService.regenerateApiKey(drawerAccess.id);
-    if (newKey !== null) {
-      setDrawerAccess({ ...drawerAccess, api_key: newKey });
-      setShowKey(true);
-      setToast({ message: 'API key regenerated successfully', type: 'success' });
-    } else {
-      setToast({ message: 'Failed to regenerate API key', type: 'error' });
     }
   };
 
@@ -302,7 +289,13 @@ export const ApiSubscriptionManagement: React.FC = () => {
               </tr>
             </thead>
             <tbody style={{ borderColor: 'var(--border)' }}>
-              {filteredData.length === 0 ? (
+              {isLoading ? (
+                <tr>
+                  <td colSpan={8} className="px-4 py-8 text-center" style={{ color: 'var(--text-muted)' }}>
+                    Loading subscriptions...
+                  </td>
+                </tr>
+              ) : filteredData.length === 0 ? (
                 <tr>
                   <td colSpan={8} className="px-4 py-8 text-center" style={{ color: 'var(--text-muted)' }}>
                     No API subscriptions found.
@@ -456,9 +449,9 @@ export const ApiSubscriptionManagement: React.FC = () => {
                 </select>
               </div>
 
-              {/* API Key */}
+              {/* API Key (read-only — profile-level) */}
               <div>
-                <label className="text-xs font-medium" style={{ color: 'var(--text-secondary)' }}>API Key</label>
+                <label className="text-xs font-medium" style={{ color: 'var(--text-secondary)' }}>API Key (Profile)</label>
                 <div className="flex items-center gap-2 mt-1">
                   <code
                     className="flex-1 px-3 py-1.5 rounded text-xs font-mono break-all"
@@ -482,15 +475,10 @@ export const ApiSubscriptionManagement: React.FC = () => {
                   >
                     <Copy className="w-3.5 h-3.5" />
                   </button>
-                  <button
-                    onClick={handleRegenerateKey}
-                    className="text-xs font-medium"
-                    style={{ color: 'var(--warning)' }}
-                    title="Regenerate"
-                  >
-                    <RefreshCw className="w-3.5 h-3.5" />
-                  </button>
                 </div>
+                <p className="text-[10px] mt-1" style={{ color: 'var(--text-muted)' }}>
+                  Same key for all APIs. Manage in Client Management → API Access Profile.
+                </p>
               </div>
 
               {/* Success Request Price */}
@@ -533,27 +521,15 @@ export const ApiSubscriptionManagement: React.FC = () => {
                 <p className="text-[10px] mt-1" style={{ color: 'var(--text-muted)' }}>Defaults to Success Price. Edit if needed.</p>
               </div>
 
-              {/* Request Limit */}
+              {/* Request Limit (read-only — profile-level) */}
               <div>
-                <label className="text-xs font-medium" style={{ color: 'var(--text-secondary)' }}>Request Limit</label>
-                <div className="flex items-center gap-2 mt-1">
-                  <input
-                    type="number"
-                    min="1"
-                    value={drawerAccess.request_limit}
-                    onChange={(e) => setDrawerAccess({ ...drawerAccess, request_limit: Number(e.target.value) })}
-                    className="theme-input flex-1 px-3 py-1.5 rounded text-sm focus:outline-none"
-                  />
-                  <select
-                    value={drawerAccess.limit_frequency}
-                    onChange={(e) => setDrawerAccess({ ...drawerAccess, limit_frequency: e.target.value as RequestLimitFrequency })}
-                    className="theme-select px-3 py-1.5 rounded text-sm focus:outline-none"
-                  >
-                    {frequencyOptions.map((f) => (
-                      <option key={f} value={f}>{f}</option>
-                    ))}
-                  </select>
-                </div>
+                <label className="text-xs font-medium" style={{ color: 'var(--text-secondary)' }}>Request Limit (Profile)</label>
+                <input
+                  type="text"
+                  value={`${drawerAccess.request_limit.toLocaleString()} / day`}
+                  disabled
+                  className="theme-input w-full px-3 py-1.5 rounded text-sm mt-1 focus:outline-none opacity-60"
+                />
               </div>
 
               {/* Expiry Date */}

@@ -40,9 +40,11 @@ export const DetailsChart: React.FC = () => {
   const hasDataRef = useRef(false);
 
   useEffect(() => {
-    dashboardService.getUsers().then(setUsers).catch(() => {});
-    dashboardService.getDashboardSummary()
-      .then((summary) => setResponseDbAvailable(summary.responseDbAvailable))
+    dashboardService.getBootstrap()
+      .then((bootstrap) => {
+        setUsers(bootstrap.users);
+        setResponseDbAvailable(bootstrap.summary.responseDbAvailable);
+      })
       .catch(() => {});
   }, []);
 
@@ -67,7 +69,15 @@ export const DetailsChart: React.FC = () => {
         selectedUserId,
         timeFilter,
         startDate,
-        endDate
+        endDate,
+        undefined,
+        silent,
+        silent ? (fresh) => {
+          if (requestId === requestRef.current) {
+            hasDataRef.current = true;
+            setDetailsData(fresh);
+          }
+        } : undefined,
       );
       if (requestId !== requestRef.current) return;
       hasDataRef.current = true;

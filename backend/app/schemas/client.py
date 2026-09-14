@@ -50,8 +50,20 @@ class ClientBase(BaseModel):
     company_name: str = Field(..., min_length=1, max_length=255)
     username: str = Field(..., min_length=3, max_length=100)
     address: str = Field(..., min_length=1)
-    gstin: str = Field(..., min_length=15, max_length=15, description="Indian GSTIN (15 characters)")
-    pan: str = Field(..., min_length=10, max_length=10, description="Indian PAN (10 characters)")
+    gstin: str = Field(
+        ...,
+        min_length=15,
+        max_length=15,
+        pattern=r"^[0-9]{2}[A-Z]{5}[0-9]{4}[A-Z][1-9A-Z]Z[0-9A-Z]$",
+        description="Indian GSTIN (15 characters, e.g. 22AAAAA0000A1Z5)",
+    )
+    pan: str = Field(
+        ...,
+        min_length=10,
+        max_length=10,
+        pattern=r"^[A-Z]{5}[0-9]{4}[A-Z]$",
+        description="Indian PAN (10 characters, e.g. AAAAA0000A)",
+    )
     email: str = Field(..., pattern=r"^[^@\s]+@[^@\s]+\.[^@\s]+$")
     phone: str = Field(..., min_length=10, max_length=20)
     selected_apis: List[str] = Field(default_factory=list)
@@ -110,9 +122,48 @@ class ClientRead(BaseModel):
     created_at: datetime
     updated_at: datetime
     visible_password: Optional[str] = None
+    api_key: Optional[str] = None
+    request_limit: Optional[int] = None
+    current_usage: int = 0
+    api_profile_assigned_by: Optional[str] = None
+    api_profile_created_at: Optional[datetime] = None
 
     class Config:
         from_attributes = True  # allows reading from ORM-like dicts
+
+
+class ClientApiProfileCreate(BaseModel):
+    """Body for POST /clients/{id}/api-profile — create universal API key + daily limit."""
+
+    request_limit: int = Field(..., ge=1, description="Daily request limit (Per Day)")
+
+
+class ClientApiProfileUpdate(BaseModel):
+    """Body for PUT /clients/{id}/api-profile — update limit, API key, and/or Redis status."""
+
+    request_limit: Optional[int] = Field(None, ge=1)
+    api_key: Optional[str] = Field(None, min_length=16, max_length=128)
+    status: Optional[str] = Field(
+        None,
+        pattern=r"^(active|inactive)$",
+        description="Redis profile status: active or inactive (lowercase)",
+    )
+
+
+class ClientApiProfileRead(BaseModel):
+    """Response after creating or reading a client API profile (Redis-backed fields)."""
+
+    client_id: str
+    api_key: str
+    username: str = ""
+    status: str = "Active"
+    used: int = 0
+    lifetimeUsed: int = 0
+    limit_frequency: str = "Per Day"
+    assigned_by: str = "admin"
+    request_limit: int
+    api_list: str = ""
+    redis_synced: bool = False
 
 
 # ============================================================================
@@ -237,18 +288,14 @@ class ApiAccessCreate(ApiAccessBase):
 
 
 class ApiAccessUpdate(BaseModel):
-    """Optional fields for updating an API access record."""
+    """Optional fields for updating an API access record (pricing/status only)."""
 
     success_price_per_hit: Optional[float] = Field(None, ge=0)
     not_found_price_per_hit: Optional[float] = Field(None, ge=0)
     price_per_hit: Optional[float] = Field(None, ge=0)
     currency: Optional[Currency] = None
-    request_limit: Optional[int] = Field(None, ge=1)
-    limit_frequency: Optional[RequestLimitFrequency] = None
-    current_usage: Optional[int] = Field(None, ge=0)
     status: Optional[str] = None
     expiry_date: Optional[str] = None
-    api_key: Optional[str] = None
 
 
 class ApiAccessRead(BaseModel):
@@ -424,6 +471,7 @@ class ApiInfoDetailRead(BaseModel):
     pricing_not_found: Optional[float] = None
     currency: Optional[str] = None
     documentation: Optional[str] = None
+    redis_api_key: Optional[str] = None
     created_at: Optional[datetime] = None
     updated_at: Optional[datetime] = None
 

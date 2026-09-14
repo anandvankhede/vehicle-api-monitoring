@@ -21,6 +21,11 @@ Document Structure:
         "comments": str,
         "request_status": str,     # "Pending" | "Approved"
         "status": str,             # "Active" | "Inactive"
+        "api_key": str,            # universal API key (one per client)
+        "request_limit": int,      # daily limit (Per Day)
+        "current_usage": int,      # mirrors Redis "used"
+        "api_profile_assigned_by": str,
+        "api_profile_created_at": datetime,
         "created_at": datetime,
         "updated_at": datetime,
     }

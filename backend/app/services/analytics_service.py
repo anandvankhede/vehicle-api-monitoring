@@ -14,11 +14,12 @@ Flow for a selected client + API:
         -> read response.response_code (and fallbacks)
         -> aggregate
 
-Status classification (verified against live response DB data):
-    response.response_code 101 -> SUCCESS   (data found)
-    response.response_code 103 -> NOT_FOUND (no data found)
-    response.response_code 110 -> FAILED    (processing/upstream error)
-    fallback fields: response.responseStatus, response.result, response.success
+Status classification (current live response schema):
+    response.response_code 100 -> SUCCESS   (data found)
+    response.response_code 103 -> NOT_FOUND (record not found)
+    response.response_code 110 -> FAILED    (upstream/processing error)
+    response.response_code 101 / 200 -> SUCCESS (legacy)
+    fallback: response_msg, response.result shape, response.responseStatus
 
 Only projected fields are read from response documents:
     access_key, created_time, response.response_code, response.responseStatus
@@ -52,76 +53,16 @@ from app.services.response_db_guard import (
     response_db_count_documents,
     response_db_find_to_list,
 )
-
-# -----------------------------------------------------------------------------
-# Response status normalization
-# -----------------------------------------------------------------------------
-
-# Client access keys on the response DB:
-#   101 -> SUCCESS | 103 -> NOT_FOUND | 110 -> FAILED
-_CODE_TO_STATUS = {101: "SUCCESS", 103: "NOT_FOUND", 110: "FAILED"}
-
-_SUCC_TOKENS = {"success", "ok", "found", "200", "101"}
-_NF_TOKENS = {"not_found", "notfound", "data not found", "no data", "103"}
-_FAIL_TOKENS = {"failed", "fail", "failure", "error", "110"}
-
-
-def normalize_response_status(response):
-    """
-    Determine the business status of a single response object.
-
-    Returns one of: 'SUCCESS' | 'NOT_FOUND' | 'FAILED' | 'OTHER'.
-    Unknown statuses are never forced into SUCCESS.
-    """
-    if not isinstance(response, dict):
-        return "OTHER"
-
-    # Primary: response_code (reliable across all seven collections)
-    code = response.get("response_code")
-    if code is not None:
-        try:
-            status = _CODE_TO_STATUS.get(int(code))
-            if status:
-                return status
-        except (TypeError, ValueError):
-            pass
-
-    # Fallback: responseStatus
-    rs = str(response.get("responseStatus", "")).strip().lower()
-    if rs == "success":
-        return "SUCCESS"
-    if rs in ("error", "failed"):
-        return "FAILED"
-
-    # Fallback: result (string form)
-    res = response.get("result")
-    if isinstance(res, str):
-        rl = res.strip().lower()
-        if rl in _SUCC_TOKENS:
-            return "SUCCESS"
-        if rl in _NF_TOKENS:
-            return "NOT_FOUND"
-        if rl in _FAIL_TOKENS:
-            return "FAILED"
-
-    # Fallback: success boolean (rc_to_mobile style)
-    success = response.get("success")
-    if isinstance(success, bool):
-        return "SUCCESS" if success else "FAILED"
-
-    return "OTHER"
+from app.utils.response_status import (
+    classify_response_code,
+    normalize_response_status,
+    status_filter_match,
+)
 
 
 def _classify_code(code) -> str:
-    """Map a raw response_code value to a status bucket."""
-    code = str(code).strip()
-    if code in ("101", "200"):
-        return "SUCCESS"
-    if code == "103":
-        return "NOT_FOUND"
-    if code == "110":
-        return "FAILED"
-    return "OTHER"
+    """Map a raw response_code value to SUCCESS | NOT_FOUND | FAILED | OTHER."""
+    return classify_response_code(code)
 
 
 # -----------------------------------------------------------------------------
@@ -425,7 +366,9 @@ def _projection() -> dict:
         "access_key": 1,
         "created_time": 1,
         "response.response_code": 1,
+        "response.response_msg": 1,
         "response.responseStatus": 1,
+        "response.result": 1,
     }
 
 
@@ -594,7 +537,7 @@ async def get_user_api_stats(
         * ALL USERS (client_id == "all"):
             Query every known response collection directly. No access key and
             no user_mapping are involved — just count response.response_code:
-                101 -> Success, 103 -> Data Not Found, 110 -> Error; total = total requests.
+                100/101 -> Success, 103 -> Not Found, 110 -> Failed; total = total requests.
         * SPECIFIC USER (client_id given):
             user_mapping -> access_key + apis[] -> each api_name -> its response
             collection, filtered by that user's access key.
@@ -614,7 +557,9 @@ async def get_user_api_stats(
         time_filter = "last_30_days"
 
     # API catalog (display id + category).
-    api_docs = await db["apis"].find().to_list(length=None)
+    from app.services.dashboard_cache import get_catalog_api_documents_cached
+
+    api_docs = await get_catalog_api_documents_cached(db)
     name_to_api = {d.get("name"): d for d in api_docs if d.get("name")}
 
     # Time bounds (current + previous window for trend).
@@ -1093,7 +1038,9 @@ async def get_client_details_stats(
         time_filter, start_date, end_date)
     sub_len = _mongodb_substr_len(time_filter)
 
-    api_docs = await db["apis"].find().to_list(length=None)
+    from app.services.dashboard_cache import get_catalog_api_documents_cached
+
+    api_docs = await get_catalog_api_documents_cached(db)
     name_to_api = {d.get("name"): d for d in api_docs if d.get("name")}
 
     scope = await resolve_query_scope(db, client_id, response_db=response_db)
@@ -1284,7 +1231,9 @@ async def get_client_analytics_stats(
     if api_id and api_id != "all":
         api_name_filter = await _resolve_api_name(db, api_id, response_db=response_db)
 
-    api_docs = await db["apis"].find().to_list(length=None)
+    from app.services.dashboard_cache import get_catalog_api_documents_cached
+
+    api_docs = await get_catalog_api_documents_cached(db)
     name_to_api = {d.get("name"): d for d in api_docs if d.get("name")}
 
     # Scope: which clients (and which api names per client) to query.
@@ -1458,17 +1407,6 @@ API_REQUEST_FIELD_MAP = {
 }
 
 
-def _status_code_match(status_filter: str) -> Dict[str, Any]:
-    """Mongo match fragment for row-level response status filtering."""
-    if status_filter == "success":
-        return {"response.response_code": {"$in": [101, 200, "101", "200"]}}
-    if status_filter == "failed":
-        return {"response.response_code": {"$in": [110, "110"]}}
-    if status_filter in ("notFound", "not_found"):
-        return {"response.response_code": {"$in": [103, "103"]}}
-    return {}
-
-
 def _extract_request_field(request: Any, api_name: str) -> Tuple[str, str]:
     """Return (field_name, value) for the export CSV request column."""
     if not isinstance(request, dict):
@@ -1547,7 +1485,7 @@ async def export_client_analytics_detail(
         "access_key": access_key,
         "created_time": {"$gte": start_str, "$lt": end_str},
     }
-    match.update(_status_code_match(status_filter))
+    match.update(status_filter_match(status_filter))
 
     projection = {
         "_id": 0,

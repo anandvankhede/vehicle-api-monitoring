@@ -75,6 +75,8 @@ export const ClientAnalytics: React.FC = () => {
   const [exporting, setExporting] = useState(false);
   const [exportingRowKey, setExportingRowKey] = useState<string | null>(null);
   const searchTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const requestRef = useRef(0);
+  const hasDataRef = useRef(false);
 
   useEffect(() => {
     if (searchTimeoutRef.current) clearTimeout(searchTimeoutRef.current);
@@ -87,7 +89,9 @@ export const ClientAnalytics: React.FC = () => {
   }, [searchQuery]);
 
   useEffect(() => {
-    dashboardService.getUsers().then(setUsers).catch(() => {});
+    dashboardService.getBootstrap()
+      .then((bootstrap) => setUsers(bootstrap.users))
+      .catch(() => {});
   }, []);
 
   useEffect(() => {
@@ -96,8 +100,14 @@ export const ClientAnalytics: React.FC = () => {
   }, [selectedClientId]);
 
   const loadData = useCallback(async (silent = false) => {
+    if (timeFilter === 'custom' && (!startDate || !endDate)) {
+      if (!silent) setIsLoading(false);
+      return;
+    }
+
+    const requestId = ++requestRef.current;
     try {
-      if (!silent) setIsLoading(true);
+      if (!silent) setIsLoading(!hasDataRef.current);
       setError(null);
       const result = await clientAnalyticsService.getClientAnalyticsData(
         selectedClientId,
@@ -108,14 +118,27 @@ export const ClientAnalytics: React.FC = () => {
         sortBy,
         sortOrder,
         startDate,
-        endDate
+        endDate,
+        silent,
+        silent ? (fresh) => {
+          if (requestId === requestRef.current) {
+            hasDataRef.current = true;
+            setData(fresh);
+          }
+        } : undefined,
       );
+      if (requestId !== requestRef.current) return;
+      hasDataRef.current = true;
       setData(result);
       setPage(1);
-    } catch (err) {
-      setError('Failed to load client analytics data.');
+    } catch {
+      if (requestId === requestRef.current) {
+        setError('Failed to load client analytics data.');
+      }
     } finally {
-      setIsLoading(false);
+      if (requestId === requestRef.current && !silent) {
+        setIsLoading(false);
+      }
     }
   }, [selectedClientId, selectedApiId, timeFilter, statusFilter, debouncedSearch, sortBy, sortOrder, startDate, endDate]);
 

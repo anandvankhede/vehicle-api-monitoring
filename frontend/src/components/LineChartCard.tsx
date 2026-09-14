@@ -74,7 +74,7 @@ export const LineChartCard: React.FC<LineChartCardProps> = ({
   if (showCardSkeleton) {
     return (
       <>
-        <div className="enterprise-card rounded-xl p-3 sm:p-4 border h-full min-h-[280px] flex flex-col animate-pulse" style={{ borderColor: 'var(--border)' }}>
+        <div className="enterprise-card rounded-xl p-3 sm:p-4 border h-full min-h-[320px] flex flex-col animate-pulse" style={{ borderColor: 'var(--border)' }}>
           <div className="h-5 rounded w-1/3 mb-3" style={{ backgroundColor: 'var(--border)' }} />
           <div className="flex-1 rounded-lg mx-2" style={{ backgroundColor: 'var(--border)' }} />
         </div>
@@ -85,7 +85,7 @@ export const LineChartCard: React.FC<LineChartCardProps> = ({
 
   return (
     <>
-      <div className="enterprise-card rounded-xl p-3 sm:p-4 border shadow-md flex flex-col h-full min-h-[280px] relative" style={{ borderColor: 'var(--border)' }}>
+      <div className="enterprise-card rounded-xl p-3 sm:p-4 border shadow-md flex flex-col h-full min-h-[320px] relative" style={{ borderColor: 'var(--border)' }}>
         {isRefreshing && (
           <div className="absolute top-2 right-2 z-10 p-1 rounded-full" style={{ backgroundColor: 'var(--card)' }}>
             <Loader2 className="w-3.5 h-3.5 animate-spin" style={{ color: 'var(--primary)' }} />

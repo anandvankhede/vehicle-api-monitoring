@@ -2,29 +2,46 @@ import React, { useState, useEffect } from 'react';
 import {
   Search, Users, ToggleLeft, ToggleRight,
   Eye, EyeOff, Trash2, Building2, Key, Save, ArrowLeft,
-  CheckCircle, XCircle, Clock, AlertTriangle, X, Activity, Pencil
+  CheckCircle, XCircle, Clock, AlertTriangle, X, Activity, Pencil, UserPlus,
+  Mail, Phone, CreditCard, FileText, User, Lock,
 } from 'lucide-react';
-import { Navigate } from 'react-router-dom';
+import {
+  GSTIN_FORMAT_EXAMPLE,
+  PAN_FORMAT_EXAMPLE,
+  validateClientRegistration,
+  type ClientRegistrationForm,
+} from '../utils/clientRegistrationValidation';
+import { Navigate, useLocation } from 'react-router-dom';
+import { invalidateCache } from '../services/dashboardCache';
 import { useAuth } from '../context/AuthContext';
 import { api } from '../services/apiClient';
 import clientService from '../services/clientService';
 import type { ApiInfo } from '../types/client';
-import type { Client, ClientApiAccess, RequestLimitFrequency, Currency, ClientApiStatus } from '../types/client';
+import type { Client, ClientApiAccess, ClientApiProfile, Currency, ClientApiStatus } from '../types/client';
 
 type ApiAccessEditDraft = {
-  api_key: string;
-  request_limit: number;
-  limit_frequency: RequestLimitFrequency;
-  current_usage: number;
   status: ClientApiStatus;
+  success_price_per_hit: number;
+  not_found_price_per_hit: number;
 };
+
+const ProfileStat: React.FC<{ label: string; value: React.ReactNode }> = ({ label, value }) => (
+  <div className="rounded-lg p-3" style={{ backgroundColor: 'var(--card-inner)', border: '1px solid var(--border)' }}>
+    <p className="text-[10px] font-medium uppercase tracking-wide" style={{ color: 'var(--text-muted)' }}>{label}</p>
+    <p className="text-sm font-semibold mt-0.5 break-all" style={{ color: 'var(--text-primary)' }}>{value}</p>
+  </div>
+);
+
+const EMPTY_REGISTER_FORM: ClientRegistrationForm = {
+  company_name: '', username: '', password: '', confirm_password: '',
+  email: '', phone: '', address: '', gstin: '', pan: '',
+};
+
+const CLIENT_LIST_PATHS = new Set(['/client-management', '/client-management/clients']);
 
 export const ClientManagementClients: React.FC = () => {
   const { isAuthenticated, user } = useAuth();
-
-  if (!isAuthenticated || user?.role !== 'admin') {
-    return <Navigate to="/admin/login" replace />;
-  }
+  const location = useLocation();
 
   const [clients, setClients] = useState<Client[]>([]);
   const [searchQuery, setSearchQuery] = useState('');
@@ -40,18 +57,31 @@ export const ClientManagementClients: React.FC = () => {
   const [newPassword, setNewPassword] = useState('');
   const [editingAccessId, setEditingAccessId] = useState<string | null>(null);
   const [editDraft, setEditDraft] = useState<ApiAccessEditDraft | null>(null);
-  const [editShowKey, setEditShowKey] = useState(false);
   const [assignApiName, setAssignApiName] = useState('');
   const [assignSuccessPrice, setAssignSuccessPrice] = useState(0.5);
   const [assignNotFoundPrice, setAssignNotFoundPrice] = useState(0.5);
   const [assignCurrency, setAssignCurrency] = useState<Currency>('INR');
-  const [assignLimit, setAssignLimit] = useState(10000);
-  const [assignFrequency, setAssignFrequency] = useState<RequestLimitFrequency>('Per Month');
-  const [showKey, setShowKey] = useState<Record<string, boolean>>({});
   const [showClientPassword, setShowClientPassword] = useState(false);
   const [showNewPassword, setShowNewPassword] = useState(false);
   const [availableApis, setAvailableApis] = useState<ApiInfo[]>([]);
   const [togglingClientId, setTogglingClientId] = useState<string | null>(null);
+  const [showRegisterDialog, setShowRegisterDialog] = useState(false);
+  const [registerForm, setRegisterForm] = useState<ClientRegistrationForm>(EMPTY_REGISTER_FORM);
+  const [registerErrors, setRegisterErrors] = useState<Record<string, string>>({});
+  const [registerGeneralError, setRegisterGeneralError] = useState('');
+  const [isRegistering, setIsRegistering] = useState(false);
+  const [showRegisterPassword, setShowRegisterPassword] = useState(false);
+  const [showRegisterConfirmPassword, setShowRegisterConfirmPassword] = useState(false);
+  const [profileRequestLimit, setProfileRequestLimit] = useState(10000);
+  const [editProfileLimit, setEditProfileLimit] = useState(10000);
+  const [editApiKey, setEditApiKey] = useState('');
+  const [apiProfile, setApiProfile] = useState<ClientApiProfile | null>(null);
+  const [isLoadingProfile, setIsLoadingProfile] = useState(false);
+  const [showApiKey, setShowApiKey] = useState(false);
+  const [isCreatingProfile, setIsCreatingProfile] = useState(false);
+  const [isUpdatingProfileLimit, setIsUpdatingProfileLimit] = useState(false);
+  const [isUpdatingApiKey, setIsUpdatingApiKey] = useState(false);
+  const [isUpdatingProfileStatus, setIsUpdatingProfileStatus] = useState(false);
 
   const currencies: Currency[] = ['INR'];
 
@@ -65,22 +95,34 @@ export const ClientManagementClients: React.FC = () => {
     }
   };
 
-  const loadClients = async () => {
-    setIsLoading(true);
+  const loadClients = async (options: { silent?: boolean } = {}) => {
+    if (!options.silent) setIsLoading(true);
     try {
       const result = await clientService.getClientsAsync('admin');
       setClients(result);
+      return result;
     } catch (error) {
       console.error('Failed to load clients:', error);
-      setClients([]);
+      return null;
     } finally {
-      setIsLoading(false);
+      if (!options.silent) setIsLoading(false);
     }
   };
 
   useEffect(() => {
+    if (!CLIENT_LIST_PATHS.has(location.pathname)) return;
     loadClients();
-  }, []);
+  }, [location.pathname]);
+
+  useEffect(() => {
+    const onVisible = () => {
+      if (document.visibilityState === 'visible' && CLIENT_LIST_PATHS.has(location.pathname)) {
+        loadClients({ silent: true });
+      }
+    };
+    document.addEventListener('visibilitychange', onVisible);
+    return () => document.removeEventListener('visibilitychange', onVisible);
+  }, [location.pathname]);
 
   useEffect(() => {
     if (!toast) return;
@@ -101,10 +143,196 @@ export const ClientManagementClients: React.FC = () => {
     }
   };
 
+  const refreshSelectedClient = async (clientId: string) => {
+    const updated = await clientService.getClientByIdAsync(clientId);
+    if (updated) {
+      setSelectedClient(updated);
+    }
+    await loadClientProfile(clientId);
+  };
+
+  const loadClientProfile = async (clientId: string) => {
+    setIsLoadingProfile(true);
+    try {
+      const profile = await clientService.getClientApiProfile(clientId);
+      setApiProfile(profile);
+      if (profile) {
+        setEditApiKey(profile.api_key);
+        setEditProfileLimit(profile.request_limit);
+      } else {
+        setEditApiKey('');
+        setEditProfileLimit(10000);
+      }
+    } catch {
+      setApiProfile(null);
+    } finally {
+      setIsLoadingProfile(false);
+    }
+  };
+
   const openClientDetails = async (client: Client) => {
     cancelEditingAccess();
-    setSelectedClient(client);
-    await Promise.all([loadClientApis(client.id), loadApis()]);
+    setShowApiKey(false);
+    setApiProfile(null);
+    const fresh = await clientService.getClientByIdAsync(client.id);
+    const active = fresh || client;
+    setSelectedClient(active);
+    setEditProfileLimit(active.request_limit ?? 10000);
+    await Promise.all([
+      loadClientApis(client.id),
+      loadApis(),
+      active.api_key ? loadClientProfile(client.id) : Promise.resolve(),
+    ]);
+  };
+
+  const openRegisterDialog = () => {
+    setRegisterForm(EMPTY_REGISTER_FORM);
+    setRegisterErrors({});
+    setRegisterGeneralError('');
+    setShowRegisterPassword(false);
+    setShowRegisterConfirmPassword(false);
+    setShowRegisterDialog(true);
+  };
+
+  const closeRegisterDialog = () => {
+    setShowRegisterDialog(false);
+    setRegisterErrors({});
+    setRegisterGeneralError('');
+    setShowRegisterPassword(false);
+    setShowRegisterConfirmPassword(false);
+  };
+
+  const updateRegisterField = (field: keyof ClientRegistrationForm, value: string) => {
+    setRegisterForm((f) => ({ ...f, [field]: value }));
+    if (registerErrors[field] || registerGeneralError) {
+      setRegisterErrors((prev) => {
+        const next = { ...prev };
+        delete next[field];
+        return next;
+      });
+      setRegisterGeneralError('');
+    }
+  };
+
+  const handleRegisterClient = async () => {
+    const fieldErrors = validateClientRegistration(registerForm, { requireConfirmPassword: true });
+    if (Object.keys(fieldErrors).length > 0) {
+      setRegisterErrors(fieldErrors);
+      setRegisterGeneralError('Please fix the highlighted fields below.');
+      return;
+    }
+
+    const { company_name, username, password, email, phone, address, gstin, pan } = registerForm;
+    setIsRegistering(true);
+    setRegisterErrors({});
+    setRegisterGeneralError('');
+    try {
+      const created = await clientService.createClientAdmin({
+        company_name: company_name.trim(),
+        username: username.trim().toLowerCase(),
+        password,
+        email: email.trim(),
+        phone: phone.trim(),
+        address: address.trim(),
+        gstin: gstin.trim().toUpperCase(),
+        pan: pan.trim().toUpperCase(),
+      });
+      setClients((prev) => [
+        created,
+        ...prev.filter((c) => c.id !== created.id),
+      ]);
+      setSelectedClient(null);
+      invalidateCache('bootstrap');
+      invalidateCache('users');
+      setToast('Client registered successfully.');
+      closeRegisterDialog();
+      setRegisterForm(EMPTY_REGISTER_FORM);
+      await Promise.all([
+        loadClients({ silent: true }),
+        clientService.loadAllData(),
+      ]);
+    } catch (err) {
+      setRegisterGeneralError(err instanceof Error ? err.message : 'Failed to register client.');
+    } finally {
+      setIsRegistering(false);
+    }
+  };
+
+  const handleCreateApiProfile = async () => {
+    if (!selectedClient || profileRequestLimit < 1) return;
+    setIsCreatingProfile(true);
+    try {
+      await clientService.createClientApiProfile(selectedClient.id, profileRequestLimit);
+      await refreshSelectedClient(selectedClient.id);
+      await loadClients();
+      setToast('API key created and saved to Redis.');
+    } catch {
+      setToast('Failed to create API profile.');
+    } finally {
+      setIsCreatingProfile(false);
+    }
+  };
+
+  const handleUpdateApiProfileLimit = async () => {
+    if (!selectedClient || editProfileLimit < 1) return;
+    setIsUpdatingProfileLimit(true);
+    try {
+      const profile = await clientService.updateClientApiProfile(selectedClient.id, {
+        request_limit: editProfileLimit,
+      });
+      setApiProfile(profile);
+      setEditProfileLimit(profile.request_limit);
+      await refreshSelectedClient(selectedClient.id);
+      setToast('Request limit updated in MongoDB and Redis.');
+    } catch (err) {
+      setToast(err instanceof Error ? err.message : 'Failed to update request limit.');
+    } finally {
+      setIsUpdatingProfileLimit(false);
+    }
+  };
+
+  const profileStatus = apiProfile?.status?.toLowerCase() ?? '';
+  const isProfileActive = profileStatus === 'active';
+
+  const handleToggleProfileStatus = async () => {
+    if (!selectedClient) return;
+    const newStatus = isProfileActive ? 'inactive' : 'active';
+    setIsUpdatingProfileStatus(true);
+    try {
+      const profile = await clientService.updateClientApiProfile(selectedClient.id, {
+        status: newStatus,
+      });
+      setApiProfile(profile);
+      await refreshSelectedClient(selectedClient.id);
+      setToast(`API profile ${newStatus === 'active' ? 'activated' : 'deactivated'} in Redis.`);
+    } catch (err) {
+      setToast(err instanceof Error ? err.message : 'Failed to update profile status.');
+    } finally {
+      setIsUpdatingProfileStatus(false);
+    }
+  };
+
+  const handleUpdateApiKey = async () => {
+    if (!selectedClient || !editApiKey.trim()) return;
+    if (editApiKey.trim().length < 16) {
+      setToast('API key must be at least 16 characters.');
+      return;
+    }
+    setIsUpdatingApiKey(true);
+    try {
+      const profile = await clientService.updateClientApiProfile(selectedClient.id, {
+        api_key: editApiKey.trim(),
+      });
+      setApiProfile(profile);
+      setEditApiKey(profile.api_key);
+      await refreshSelectedClient(selectedClient.id);
+      await loadClientApis(selectedClient.id);
+      setToast('API key updated in MongoDB and Redis.');
+    } catch (err) {
+      setToast(err instanceof Error ? err.message : 'Failed to update API key.');
+    } finally {
+      setIsUpdatingApiKey(false);
+    }
   };
 
   const handleToggleStatus = async (client: Client) => {
@@ -117,7 +345,7 @@ export const ClientManagementClients: React.FC = () => {
       await clientService.updateStatus(client.id, newStatus);
       await loadClients();
       setToast(`Client ${newStatus === 'Active' ? 'activated' : 'deactivated'} successfully.`);
-    } catch (error) {
+    } catch {
       setToast('Failed to update client status.');
     } finally {
       setTogglingClientId(null);
@@ -131,11 +359,37 @@ export const ClientManagementClients: React.FC = () => {
     setToast('Client deleted successfully.');
   };
 
+  const openAssignDialog = async (apiName: string) => {
+    if (!selectedClient?.api_key) return;
+    if (selectedClient) {
+      await loadClientApis(selectedClient.id);
+    }
+    setAssignApiName(apiName);
+    setShowAssignDialog(true);
+  };
+
   const handleAssignApi = async () => {
-    if (!selectedClient) return;
-    const success = await clientService.assignApi(selectedClient.id, assignApiName, assignLimit, assignFrequency, assignSuccessPrice, assignCurrency, 'admin', assignSuccessPrice, assignNotFoundPrice);
-    if (success) {
-      setToast(`API ${assignApiName} assigned successfully.`);
+    if (!selectedClient || !assignApiName) return;
+    if (clientApis.some((a) => a.api_name === assignApiName)) {
+      setToast(`API ${assignApiName} is already assigned to this client.`);
+      setShowAssignDialog(false);
+      return;
+    }
+    const result = await clientService.assignApi(
+      selectedClient.id,
+      assignApiName,
+      assignSuccessPrice,
+      assignCurrency,
+      'admin',
+      assignSuccessPrice,
+      assignNotFoundPrice,
+    );
+    if (result.success) {
+      setToast(
+        result.alreadyAssigned
+          ? `API ${assignApiName} is already assigned — list updated.`
+          : `API ${assignApiName} assigned successfully.`,
+      );
       setShowAssignDialog(false);
       await Promise.all([
         loadClientApis(selectedClient.id),
@@ -143,7 +397,8 @@ export const ClientManagementClients: React.FC = () => {
         loadApis(),
       ]);
     } else {
-      setToast('Failed to assign API. It may already be assigned.');
+      setToast(result.error ?? 'Failed to assign API.');
+      await loadClientApis(selectedClient.id);
     }
   };
 
@@ -169,33 +424,24 @@ export const ClientManagementClients: React.FC = () => {
   const startEditingAccess = (access: ClientApiAccess) => {
     setEditingAccessId(access.id);
     setEditDraft({
-      api_key: access.api_key || '',
-      request_limit: access.request_limit,
-      limit_frequency: access.limit_frequency,
-      current_usage: access.current_usage,
       status: access.status,
+      success_price_per_hit: access.success_price_per_hit,
+      not_found_price_per_hit: access.not_found_price_per_hit,
     });
-    setEditShowKey(false);
   };
 
   const cancelEditingAccess = () => {
     setEditingAccessId(null);
     setEditDraft(null);
-    setEditShowKey(false);
   };
 
   const handleSaveAccessEdit = async () => {
     if (!editingAccessId || !editDraft) return;
-    if (!editDraft.api_key.trim()) {
-      setToast('API key cannot be empty.');
-      return;
-    }
     try {
       const updates = {
-        api_key: editDraft.api_key.trim(),
-        request_limit: editDraft.request_limit,
-        limit_frequency: editDraft.limit_frequency,
-        current_usage: editDraft.current_usage,
+        success_price_per_hit: editDraft.success_price_per_hit,
+        not_found_price_per_hit: editDraft.not_found_price_per_hit,
+        price_per_hit: editDraft.success_price_per_hit,
         status: editDraft.status,
       };
       await api.updateApiAccess(editingAccessId, updates);
@@ -208,8 +454,6 @@ export const ClientManagementClients: React.FC = () => {
       setToast('Failed to save API configuration.');
     }
   };
-
-  const frequencyOptions: RequestLimitFrequency[] = ['Per Minute', 'Per Hour', 'Per Day', 'Per Month', 'Per Year'];
 
   const filteredClients = clients.filter((client) => {
     if (statusFilter !== 'All' && client.status !== statusFilter) return false;
@@ -265,6 +509,10 @@ export const ClientManagementClients: React.FC = () => {
     (api) => !clientApis.some((a) => a.api_name === api.name)
   );
 
+  if (!isAuthenticated || user?.role !== 'admin') {
+    return <Navigate to="/admin/login" replace />;
+  }
+
   return (
     <div className="page-container py-6">
       {toast && (
@@ -288,6 +536,15 @@ export const ClientManagementClients: React.FC = () => {
                   className="theme-input w-full pl-9 pr-3 py-2.5 rounded-lg text-sm focus:outline-none"
                 />
               </div>
+              <button
+                type="button"
+                onClick={openRegisterDialog}
+                className="flex items-center gap-2 px-4 py-2.5 rounded-lg text-sm font-semibold text-white whitespace-nowrap"
+                style={{ backgroundColor: 'var(--primary)' }}
+              >
+                <UserPlus className="w-4 h-4" />
+                Register Client
+              </button>
               <div className="flex gap-1 p-1 rounded-lg" style={{ backgroundColor: 'var(--card-inner)', border: '1px solid var(--border)' }}>
                 {(['All', 'Active', 'Inactive'] as const).map((f) => (
                   <button
@@ -382,7 +639,12 @@ export const ClientManagementClients: React.FC = () => {
       ) : (
         <div>
           <button
-            onClick={() => { cancelEditingAccess(); setSelectedClient(null); setClientApis([]); }}
+            onClick={() => {
+              cancelEditingAccess();
+              setSelectedClient(null);
+              setClientApis([]);
+              loadClients({ silent: true });
+            }}
             className="flex items-center gap-1.5 text-sm font-medium mb-4 transition-colors"
             style={{ color: 'var(--primary)' }}
           >
@@ -487,15 +749,164 @@ export const ClientManagementClients: React.FC = () => {
               </div>
             </div>
 
-            <div className="rounded-xl p-5" style={{ backgroundColor: 'var(--card)', border: '1px solid var(--border)', boxShadow: 'var(--card-shadow)' }}>
+            <div className="rounded-xl p-5 h-full" style={{ backgroundColor: 'var(--card)', border: '1px solid var(--border)', boxShadow: 'var(--card-shadow)' }}>
+              <h3 className="text-sm font-bold mb-4 flex items-center gap-2" style={{ color: 'var(--text-primary)' }}>
+                <Key className="w-4 h-4" style={{ color: 'var(--primary)' }} />
+                API Access Profile
+                {apiProfile?.redis_synced && (
+                  <span className="text-[10px] font-semibold px-2 py-0.5 rounded-full" style={{ backgroundColor: 'var(--success-bg)', color: 'var(--success)' }}>
+                    Redis synced
+                  </span>
+                )}
+              </h3>
+
+              {!selectedClient.api_key ? (
+                <div className="space-y-3">
+                  <p className="text-xs" style={{ color: 'var(--text-secondary)' }}>
+                    Create a universal API key and daily request limit. Profile is stored in Redis with an empty API list until APIs are assigned.
+                  </p>
+                  <div>
+                    <label className="text-xs font-medium" style={{ color: 'var(--text-secondary)' }}>Daily Request Limit (Per Day)</label>
+                    <input
+                      type="number"
+                      min={1}
+                      value={profileRequestLimit}
+                      onChange={(e) => setProfileRequestLimit(Number(e.target.value))}
+                      className="theme-input w-full px-3 py-2 rounded-lg text-sm mt-1 focus:outline-none"
+                    />
+                  </div>
+                  <button
+                    type="button"
+                    onClick={handleCreateApiProfile}
+                    disabled={isCreatingProfile}
+                    className="flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-semibold text-white"
+                    style={{ backgroundColor: 'var(--primary)', opacity: isCreatingProfile ? 0.7 : 1 }}
+                  >
+                    <Key className="w-4 h-4" />
+                    {isCreatingProfile ? 'Creating...' : 'Create API Key'}
+                  </button>
+                </div>
+              ) : isLoadingProfile ? (
+                <div className="flex items-center justify-center py-12">
+                  <div className="w-6 h-6 border-2 rounded-full animate-spin" style={{ borderColor: 'var(--border)', borderTopColor: 'var(--primary)' }} />
+                </div>
+              ) : (
+                <div className="space-y-4">
+                  <div className="grid grid-cols-2 gap-3">
+                    <ProfileStat label="client_id" value={apiProfile?.client_id || selectedClient.id} />
+                    <ProfileStat label="username" value={apiProfile?.username || selectedClient.username} />
+                    <div className="rounded-lg p-3" style={{ backgroundColor: 'var(--card-inner)', border: '1px solid var(--border)' }}>
+                      <p className="text-[10px] font-medium uppercase tracking-wide" style={{ color: 'var(--text-muted)' }}>status</p>
+                      <div className="flex items-center justify-between gap-2 mt-1">
+                        <span
+                          className="text-sm font-semibold capitalize"
+                          style={{
+                            color: profileStatus === 'inactive'
+                              ? 'var(--error)'
+                              : profileStatus === 'active'
+                                ? 'var(--success)'
+                                : 'var(--text-muted)',
+                          }}
+                        >
+                          {profileStatus || '—'}
+                        </span>
+                        <button
+                          type="button"
+                          onClick={handleToggleProfileStatus}
+                          disabled={isUpdatingProfileStatus}
+                          className="px-2.5 py-1 rounded text-[10px] font-semibold whitespace-nowrap disabled:opacity-50"
+                          style={{
+                            backgroundColor: isProfileActive ? 'var(--error-bg)' : 'var(--success-bg)',
+                            color: isProfileActive ? 'var(--error)' : 'var(--success)',
+                          }}
+                        >
+                          {isUpdatingProfileStatus
+                            ? 'Updating...'
+                            : isProfileActive
+                              ? 'Deactivate'
+                              : 'Activate'}
+                        </button>
+                      </div>
+                    </div>
+                    <ProfileStat label="used" value={(apiProfile?.used ?? 0).toLocaleString()} />
+                    <ProfileStat label="lifetimeUsed" value={(apiProfile?.lifetimeUsed ?? 0).toLocaleString()} />
+                    <ProfileStat label="limit_frequency" value={apiProfile?.limit_frequency || 'Per Day'} />
+                    <ProfileStat label="assigned_by" value={apiProfile?.assigned_by || 'admin'} />
+                    <ProfileStat label="request_limit" value={(apiProfile?.request_limit ?? editProfileLimit).toLocaleString()} />
+                    <ProfileStat
+                      label="api_list (Redis)"
+                      value={apiProfile?.api_list || '—'}
+                    />
+                  </div>
+
+                  <div className="pt-4 border-t space-y-4" style={{ borderColor: 'var(--border)' }}>
+                    <div>
+                      <label className="text-xs font-medium block mb-1.5" style={{ color: 'var(--text-secondary)' }}>API Key</label>
+                      <div className="flex flex-col sm:flex-row gap-2">
+                        <div className="relative flex-1">
+                          <input
+                            type={showApiKey ? 'text' : 'password'}
+                            value={editApiKey}
+                            onChange={(e) => setEditApiKey(e.target.value)}
+                            className="theme-input w-full px-3 py-2.5 pr-10 rounded-lg text-xs font-mono focus:outline-none"
+                            placeholder="Enter API key"
+                          />
+                          <button
+                            type="button"
+                            onClick={() => setShowApiKey((v) => !v)}
+                            className="absolute right-2 top-1/2 -translate-y-1/2 p-1 rounded"
+                            style={{ color: 'var(--text-muted)' }}
+                          >
+                            {showApiKey ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
+                          </button>
+                        </div>
+                        <button
+                          type="button"
+                          onClick={handleUpdateApiKey}
+                          disabled={isUpdatingApiKey || editApiKey.trim() === apiProfile?.api_key}
+                          className="px-4 py-2.5 rounded-lg text-xs font-semibold text-white whitespace-nowrap disabled:opacity-50"
+                          style={{ backgroundColor: 'var(--primary)' }}
+                        >
+                          {isUpdatingApiKey ? 'Updating...' : 'Update Key'}
+                        </button>
+                      </div>
+                    </div>
+
+                    <div>
+                      <label className="text-xs font-medium block mb-1.5" style={{ color: 'var(--text-secondary)' }}>Request Limit (Per Day)</label>
+                      <div className="flex flex-col sm:flex-row gap-2">
+                        <input
+                          type="number"
+                          min={1}
+                          value={editProfileLimit}
+                          onChange={(e) => setEditProfileLimit(Number(e.target.value))}
+                          className="theme-input flex-1 px-3 py-2.5 rounded-lg text-sm focus:outline-none"
+                        />
+                        <button
+                          type="button"
+                          onClick={handleUpdateApiProfileLimit}
+                          disabled={isUpdatingProfileLimit || editProfileLimit === apiProfile?.request_limit}
+                          className="px-4 py-2.5 rounded-lg text-xs font-semibold text-white whitespace-nowrap disabled:opacity-50"
+                          style={{ backgroundColor: 'var(--primary)' }}
+                        >
+                          {isUpdatingProfileLimit ? 'Updating...' : 'Update Limit'}
+                        </button>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              )}
+            </div>
+
+            <div className="rounded-xl p-5 lg:col-span-2" style={{ backgroundColor: 'var(--card)', border: '1px solid var(--border)', boxShadow: 'var(--card-shadow)' }}>
               <div className="flex items-center justify-between mb-4">
                 <h3 className="text-sm font-bold flex items-center gap-2" style={{ color: 'var(--text-primary)' }}>
                   <Activity className="w-4 h-4" style={{ color: 'var(--primary)' }} />
                   API Management
                 </h3>
-                {unassignedApis.length > 0 && (
+                {unassignedApis.length > 0 && selectedClient.api_key && (
                   <button
-                    onClick={() => { setAssignApiName(unassignedApis[0].name); setShowAssignDialog(true); }}
+                    onClick={() => openAssignDialog(unassignedApis[0].name)}
                     className="flex items-center gap-1 px-2.5 py-1.5 rounded-lg text-xs font-semibold transition-all hover:opacity-90"
                     style={{ backgroundColor: 'var(--primary)', color: '#ffffff' }}
                   >
@@ -504,6 +915,11 @@ export const ClientManagementClients: React.FC = () => {
                   </button>
                 )}
               </div>
+              {!selectedClient.api_key && (
+                <p className="text-xs mb-4 px-3 py-2 rounded-lg" style={{ backgroundColor: 'var(--warning-bg)', color: 'var(--warning)' }}>
+                  Create an API Access Profile above before assigning APIs.
+                </p>
+              )}
 
               {isLoadingApis ? (
                 <div className="flex items-center justify-center py-8">
@@ -528,8 +944,9 @@ export const ClientManagementClients: React.FC = () => {
                             <ApiStatusBadge status="Not Assigned" />
                           </div>
                           <button
-                            onClick={() => { setAssignApiName(api.name); setShowAssignDialog(true); }}
-                            className="mt-3 w-full flex items-center justify-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold transition-all hover:opacity-90"
+                            onClick={() => openAssignDialog(api.name)}
+                            disabled={!selectedClient.api_key}
+                            className="mt-3 w-full flex items-center justify-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold transition-all hover:opacity-90 disabled:opacity-50 disabled:cursor-not-allowed"
                             style={{ backgroundColor: 'var(--primary-light)', color: 'var(--primary)' }}
                           >
                             <Key className="w-3.5 h-3.5" />
@@ -539,11 +956,7 @@ export const ClientManagementClients: React.FC = () => {
                       );
                     }
 
-                    const usagePercent = access.request_limit > 0 ? Math.min(100, Math.round((access.current_usage / access.request_limit) * 100)) : 0;
                     const isEditing = editingAccessId === access.id;
-                    const draftUsagePercent = editDraft && editDraft.request_limit > 0
-                      ? Math.min(100, Math.round((editDraft.current_usage / editDraft.request_limit) * 100))
-                      : 0;
 
                     return (
                       <div key={api.name} className="rounded-lg p-4" style={{ backgroundColor: 'var(--card-inner)', border: '1px solid var(--border)' }}>
@@ -567,78 +980,27 @@ export const ClientManagementClients: React.FC = () => {
 
                         {isEditing && editDraft ? (
                           <div className="space-y-3">
-                            <div>
-                              <label className="block text-xs font-medium mb-1" style={{ color: 'var(--text-muted)' }}>API Key</label>
-                              <div className="flex items-center gap-2">
-                                <input
-                                  type={editShowKey ? 'text' : 'password'}
-                                  value={editDraft.api_key}
-                                  onChange={(e) => setEditDraft({ ...editDraft, api_key: e.target.value })}
-                                  className="theme-input flex-1 px-3 py-2 rounded-lg text-xs focus:outline-none font-mono"
-                                  placeholder="Enter API key"
-                                />
-                                <button
-                                  type="button"
-                                  onClick={() => setEditShowKey((v) => !v)}
-                                  className="p-2 rounded-lg"
-                                  style={{ color: 'var(--primary)', backgroundColor: 'var(--primary-light)' }}
-                                  title={editShowKey ? 'Hide' : 'Show'}
-                                >
-                                  {editShowKey ? <EyeOff className="w-3.5 h-3.5" /> : <Eye className="w-3.5 h-3.5" />}
-                                </button>
-                              </div>
-                            </div>
-
                             <div className="grid grid-cols-2 gap-3">
                               <div>
-                                <label className="block text-xs font-medium mb-1" style={{ color: 'var(--text-muted)' }}>Request Limit</label>
+                                <label className="block text-xs font-medium mb-1" style={{ color: 'var(--text-muted)' }}>Success Price</label>
                                 <input
                                   type="number"
-                                  value={editDraft.request_limit}
-                                  onChange={(e) => setEditDraft({ ...editDraft, request_limit: Number(e.target.value) })}
+                                  step="0.01"
+                                  min={0}
+                                  value={editDraft.success_price_per_hit}
+                                  onChange={(e) => setEditDraft({ ...editDraft, success_price_per_hit: Number(e.target.value) })}
                                   className="theme-input w-full px-3 py-2 rounded-lg text-xs focus:outline-none"
-                                  min={1}
                                 />
                               </div>
                               <div>
-                                <label className="block text-xs font-medium mb-1" style={{ color: 'var(--text-muted)' }}>Frequency</label>
-                                <select
-                                  value={editDraft.limit_frequency}
-                                  onChange={(e) => setEditDraft({ ...editDraft, limit_frequency: e.target.value as RequestLimitFrequency })}
+                                <label className="block text-xs font-medium mb-1" style={{ color: 'var(--text-muted)' }}>Not Found Price</label>
+                                <input
+                                  type="number"
+                                  step="0.01"
+                                  min={0}
+                                  value={editDraft.not_found_price_per_hit}
+                                  onChange={(e) => setEditDraft({ ...editDraft, not_found_price_per_hit: Number(e.target.value) })}
                                   className="theme-input w-full px-3 py-2 rounded-lg text-xs focus:outline-none"
-                                >
-                                  {frequencyOptions.map((f) => (
-                                    <option key={f} value={f}>{f}</option>
-                                  ))}
-                                </select>
-                              </div>
-                            </div>
-
-                            <div>
-                              <label className="block text-xs font-medium mb-1" style={{ color: 'var(--text-muted)' }}>Current Usage</label>
-                              <input
-                                type="number"
-                                value={editDraft.current_usage}
-                                onChange={(e) => setEditDraft({ ...editDraft, current_usage: Number(e.target.value) })}
-                                className="theme-input w-full px-3 py-2 rounded-lg text-xs focus:outline-none"
-                                min={0}
-                              />
-                            </div>
-
-                            <div>
-                              <div className="flex items-center justify-between text-xs mb-1">
-                                <span style={{ color: 'var(--text-muted)' }}>Usage</span>
-                                <span style={{ color: 'var(--text-secondary)' }}>
-                                  {editDraft.current_usage.toLocaleString()} / {editDraft.request_limit.toLocaleString()} ({draftUsagePercent}%)
-                                </span>
-                              </div>
-                              <div className="w-full h-1.5 rounded-full" style={{ backgroundColor: 'var(--card)' }}>
-                                <div
-                                  className="h-1.5 rounded-full transition-all"
-                                  style={{
-                                    width: `${draftUsagePercent}%`,
-                                    backgroundColor: draftUsagePercent > 80 ? 'var(--error)' : draftUsagePercent > 50 ? 'var(--warning)' : 'var(--success)',
-                                  }}
                                 />
                               </div>
                             </div>
@@ -661,6 +1023,10 @@ export const ClientManagementClients: React.FC = () => {
                               </button>
                             </div>
 
+                            <p className="text-[10px]" style={{ color: 'var(--text-muted)' }}>
+                              API key and request limits are managed in the API Access Profile above.
+                            </p>
+
                             <div className="flex gap-2 pt-1">
                               <button
                                 type="button"
@@ -682,56 +1048,24 @@ export const ClientManagementClients: React.FC = () => {
                             </div>
                           </div>
                         ) : (
-                          <div className="space-y-2.5">
-                            <div className="flex items-center justify-between gap-2 text-xs">
-                              <span className="font-medium shrink-0" style={{ color: 'var(--text-muted)' }}>API Key</span>
-                              <div className="flex items-center gap-1.5 min-w-0">
-                                <code className="text-xs truncate" style={{ color: 'var(--text-secondary)' }}>
-                                  {showKey[access.id] ? access.api_key : '••••••••••••••••••••••••'}
-                                </code>
-                                <button
-                                  type="button"
-                                  onClick={() => setShowKey((prev) => ({ ...prev, [access.id]: !prev[access.id] }))}
-                                  className="text-xs font-medium shrink-0"
-                                  style={{ color: 'var(--primary)' }}
-                                >
-                                  {showKey[access.id] ? 'Hide' : 'Show'}
-                                </button>
-                              </div>
-                            </div>
-
-                            <div className="grid grid-cols-2 gap-x-4 gap-y-2 text-xs">
+                          <div className="space-y-2.5 text-xs">
+                            <div className="grid grid-cols-2 gap-x-4 gap-y-2">
                               <div>
-                                <span className="block font-medium mb-0.5" style={{ color: 'var(--text-muted)' }}>Request Limit</span>
-                                <span className="font-semibold" style={{ color: 'var(--text-primary)' }}>{access.request_limit.toLocaleString()}</span>
-                              </div>
-                              <div>
-                                <span className="block font-medium mb-0.5" style={{ color: 'var(--text-muted)' }}>Frequency</span>
-                                <span className="font-semibold" style={{ color: 'var(--text-primary)' }}>{access.limit_frequency}</span>
-                              </div>
-                              <div>
-                                <span className="block font-medium mb-0.5" style={{ color: 'var(--text-muted)' }}>Current Usage</span>
-                                <span className="font-semibold" style={{ color: 'var(--text-primary)' }}>{access.current_usage.toLocaleString()}</span>
-                              </div>
-                            </div>
-
-                            <div>
-                              <div className="flex items-center justify-between text-xs mb-1">
-                                <span style={{ color: 'var(--text-muted)' }}>Usage</span>
-                                <span style={{ color: 'var(--text-secondary)' }}>
-                                  {access.current_usage.toLocaleString()} / {access.request_limit.toLocaleString()} ({usagePercent}%)
+                                <span className="block font-medium mb-0.5" style={{ color: 'var(--text-muted)' }}>Success Price</span>
+                                <span className="font-semibold" style={{ color: 'var(--text-primary)' }}>
+                                  {access.success_price_per_hit} {access.currency}
                                 </span>
                               </div>
-                              <div className="w-full h-1.5 rounded-full" style={{ backgroundColor: 'var(--card)' }}>
-                                <div
-                                  className="h-1.5 rounded-full"
-                                  style={{
-                                    width: `${usagePercent}%`,
-                                    backgroundColor: usagePercent > 80 ? 'var(--error)' : usagePercent > 50 ? 'var(--warning)' : 'var(--success)',
-                                  }}
-                                />
+                              <div>
+                                <span className="block font-medium mb-0.5" style={{ color: 'var(--text-muted)' }}>Not Found Price</span>
+                                <span className="font-semibold" style={{ color: 'var(--text-primary)' }}>
+                                  {access.not_found_price_per_hit} {access.currency}
+                                </span>
                               </div>
                             </div>
+                            <p className="text-[10px]" style={{ color: 'var(--text-muted)' }}>
+                              Uses the universal API key from API Access Profile.
+                            </p>
                           </div>
                         )}
                       </div>
@@ -771,6 +1105,233 @@ export const ClientManagementClients: React.FC = () => {
               </button>
               <button onClick={() => handleSoftDelete(showDeleteConfirm)} className="flex-1 px-4 py-2.5 rounded-lg text-sm font-semibold text-white" style={{ backgroundColor: 'var(--error)' }}>
                 Delete
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {showRegisterDialog && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
+          <div className="absolute inset-0" style={{ backgroundColor: 'rgba(0,0,0,0.5)' }} onClick={closeRegisterDialog} />
+          <div className="relative w-full max-w-lg rounded-xl p-6 max-h-[90vh] overflow-y-auto" style={{ backgroundColor: 'var(--card)', border: '1px solid var(--border)', boxShadow: '0 20px 60px rgba(0,0,0,0.3)' }}>
+            <div className="flex items-start justify-between mb-4">
+              <div className="flex items-center gap-3">
+                <div className="w-10 h-10 rounded-xl flex items-center justify-center" style={{ backgroundColor: 'var(--primary-light)' }}>
+                  <UserPlus className="w-5 h-5" style={{ color: 'var(--primary)' }} />
+                </div>
+                <div>
+                  <h3 className="text-sm font-bold" style={{ color: 'var(--text-primary)' }}>Register Client</h3>
+                  <p className="text-xs" style={{ color: 'var(--text-secondary)' }}>Create a new client account (admin)</p>
+                </div>
+              </div>
+              <button onClick={closeRegisterDialog} className="p-1 rounded-lg" style={{ color: 'var(--text-muted)' }}>
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+
+            {registerGeneralError && (
+              <div className="mb-4 flex items-start gap-2 px-3 py-2.5 rounded-lg text-xs" style={{ backgroundColor: 'var(--error-bg)', color: 'var(--error)' }}>
+                <AlertTriangle className="w-4 h-4 shrink-0 mt-0.5" />
+                <span>{registerGeneralError}</span>
+              </div>
+            )}
+
+            <div className="space-y-4">
+              {/* Company Details */}
+              <div className="space-y-3">
+                <div className="flex items-center gap-2 pb-1.5 border-b" style={{ borderColor: 'var(--border)' }}>
+                  <Building2 className="w-4 h-4" style={{ color: 'var(--primary)' }} />
+                  <span className="text-sm font-bold" style={{ color: 'var(--text-primary)' }}>Company Details</span>
+                </div>
+
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                  <div>
+                    <label className="text-xs font-medium" style={{ color: 'var(--text-secondary)' }}>Company Name <span style={{ color: 'var(--error)' }}>*</span></label>
+                    <input
+                      value={registerForm.company_name}
+                      onChange={(e) => updateRegisterField('company_name', e.target.value)}
+                      placeholder="Enter company name"
+                      className="theme-input w-full px-3 py-2 rounded-lg text-sm mt-1 focus:outline-none"
+                      style={registerErrors.company_name ? { borderColor: 'var(--error)' } : undefined}
+                    />
+                    {registerErrors.company_name && <p className="text-[10px] mt-1" style={{ color: 'var(--error)' }}>{registerErrors.company_name}</p>}
+                  </div>
+                  <div>
+                    <label className="text-xs font-medium" style={{ color: 'var(--text-secondary)' }}>Phone <span style={{ color: 'var(--error)' }}>*</span></label>
+                    <div className="relative mt-1">
+                      <Phone className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4" style={{ color: 'var(--text-muted)' }} />
+                      <input
+                        type="tel"
+                        value={registerForm.phone}
+                        onChange={(e) => updateRegisterField('phone', e.target.value.replace(/\D/g, '').slice(0, 10))}
+                        placeholder="9876543210"
+                        maxLength={10}
+                        className="theme-input w-full pl-9 pr-3 py-2 rounded-lg text-sm focus:outline-none"
+                        style={registerErrors.phone ? { borderColor: 'var(--error)' } : undefined}
+                      />
+                    </div>
+                    {registerErrors.phone
+                      ? <p className="text-[10px] mt-1" style={{ color: 'var(--error)' }}>{registerErrors.phone}</p>
+                      : <p className="text-[10px] mt-1" style={{ color: 'var(--text-muted)' }}>10-digit Indian mobile (starts with 6–9)</p>}
+                  </div>
+                </div>
+
+                <div>
+                  <label className="text-xs font-medium" style={{ color: 'var(--text-secondary)' }}>Address <span style={{ color: 'var(--error)' }}>*</span></label>
+                  <textarea
+                    value={registerForm.address}
+                    onChange={(e) => updateRegisterField('address', e.target.value)}
+                    placeholder="Enter company address"
+                    rows={2}
+                    className="theme-input w-full px-3 py-2 rounded-lg text-sm mt-1 focus:outline-none resize-none"
+                    style={registerErrors.address ? { borderColor: 'var(--error)' } : undefined}
+                  />
+                  {registerErrors.address && <p className="text-[10px] mt-1" style={{ color: 'var(--error)' }}>{registerErrors.address}</p>}
+                </div>
+
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                  <div>
+                    <label className="text-xs font-medium" style={{ color: 'var(--text-secondary)' }}>GSTIN <span style={{ color: 'var(--error)' }}>*</span></label>
+                    <div className="relative mt-1">
+                      <CreditCard className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4" style={{ color: 'var(--text-muted)' }} />
+                      <input
+                        value={registerForm.gstin}
+                        onChange={(e) => updateRegisterField('gstin', e.target.value.toUpperCase().replace(/[^0-9A-Z]/g, '').slice(0, 15))}
+                        placeholder={GSTIN_FORMAT_EXAMPLE}
+                        maxLength={15}
+                        className="theme-input w-full pl-9 pr-3 py-2 rounded-lg text-sm focus:outline-none"
+                        style={registerErrors.gstin ? { borderColor: 'var(--error)' } : undefined}
+                      />
+                    </div>
+                    {registerErrors.gstin
+                      ? <p className="text-[10px] mt-1" style={{ color: 'var(--error)' }}>{registerErrors.gstin}</p>
+                      : <p className="text-[10px] mt-1" style={{ color: 'var(--text-muted)' }}>Format: 2-digit state + PAN + entity + Z + checksum</p>}
+                  </div>
+                  <div>
+                    <label className="text-xs font-medium" style={{ color: 'var(--text-secondary)' }}>PAN <span style={{ color: 'var(--error)' }}>*</span></label>
+                    <div className="relative mt-1">
+                      <FileText className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4" style={{ color: 'var(--text-muted)' }} />
+                      <input
+                        value={registerForm.pan}
+                        onChange={(e) => updateRegisterField('pan', e.target.value.toUpperCase().replace(/[^0-9A-Z]/g, '').slice(0, 10))}
+                        placeholder={PAN_FORMAT_EXAMPLE}
+                        maxLength={10}
+                        className="theme-input w-full pl-9 pr-3 py-2 rounded-lg text-sm focus:outline-none"
+                        style={registerErrors.pan ? { borderColor: 'var(--error)' } : undefined}
+                      />
+                    </div>
+                    {registerErrors.pan
+                      ? <p className="text-[10px] mt-1" style={{ color: 'var(--error)' }}>{registerErrors.pan}</p>
+                      : <p className="text-[10px] mt-1" style={{ color: 'var(--text-muted)' }}>Format: 5 letters + 4 digits + 1 letter</p>}
+                  </div>
+                </div>
+
+                <div>
+                  <label className="text-xs font-medium" style={{ color: 'var(--text-secondary)' }}>Email <span style={{ color: 'var(--error)' }}>*</span></label>
+                  <div className="relative mt-1">
+                    <Mail className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4" style={{ color: 'var(--text-muted)' }} />
+                    <input
+                      type="email"
+                      value={registerForm.email}
+                      onChange={(e) => updateRegisterField('email', e.target.value)}
+                      placeholder="company@example.com"
+                      className="theme-input w-full pl-9 pr-3 py-2 rounded-lg text-sm focus:outline-none"
+                      style={registerErrors.email ? { borderColor: 'var(--error)' } : undefined}
+                    />
+                  </div>
+                  {registerErrors.email && <p className="text-[10px] mt-1" style={{ color: 'var(--error)' }}>{registerErrors.email}</p>}
+                </div>
+              </div>
+
+              {/* User Credentials */}
+              <div className="space-y-3">
+                <div className="flex items-center gap-2 pb-1.5 border-b" style={{ borderColor: 'var(--border)' }}>
+                  <User className="w-4 h-4" style={{ color: 'var(--primary)' }} />
+                  <span className="text-sm font-bold" style={{ color: 'var(--text-primary)' }}>User Credentials</span>
+                </div>
+
+                <div>
+                  <label className="text-xs font-medium" style={{ color: 'var(--text-secondary)' }}>Username <span style={{ color: 'var(--error)' }}>*</span></label>
+                  <div className="relative mt-1">
+                    <User className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4" style={{ color: 'var(--text-muted)' }} />
+                    <input
+                      value={registerForm.username}
+                      onChange={(e) => updateRegisterField('username', e.target.value)}
+                      placeholder="Choose a username (min 3 chars)"
+                      className="theme-input w-full pl-9 pr-3 py-2 rounded-lg text-sm focus:outline-none"
+                      style={registerErrors.username ? { borderColor: 'var(--error)' } : undefined}
+                    />
+                  </div>
+                  {registerErrors.username
+                    ? <p className="text-[10px] mt-1" style={{ color: 'var(--error)' }}>{registerErrors.username}</p>
+                    : <p className="text-[10px] mt-1" style={{ color: 'var(--text-muted)' }}>Letters, numbers, . _ - only</p>}
+                </div>
+
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                  <div>
+                    <label className="text-xs font-medium" style={{ color: 'var(--text-secondary)' }}>Password <span style={{ color: 'var(--error)' }}>*</span></label>
+                    <div className="relative mt-1">
+                      <Lock className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4" style={{ color: 'var(--text-muted)' }} />
+                      <input
+                        type={showRegisterPassword ? 'text' : 'password'}
+                        value={registerForm.password}
+                        onChange={(e) => updateRegisterField('password', e.target.value)}
+                        placeholder="Min 8 characters"
+                        className="theme-input w-full pl-9 pr-10 py-2 rounded-lg text-sm focus:outline-none"
+                        style={registerErrors.password ? { borderColor: 'var(--error)' } : undefined}
+                      />
+                      <button
+                        type="button"
+                        onClick={() => setShowRegisterPassword((v) => !v)}
+                        className="absolute right-3 top-1/2 -translate-y-1/2"
+                        style={{ color: 'var(--text-muted)' }}
+                        tabIndex={-1}
+                      >
+                        {showRegisterPassword ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
+                      </button>
+                    </div>
+                    {registerErrors.password && <p className="text-[10px] mt-1" style={{ color: 'var(--error)' }}>{registerErrors.password}</p>}
+                  </div>
+                  <div>
+                    <label className="text-xs font-medium" style={{ color: 'var(--text-secondary)' }}>Confirm Password <span style={{ color: 'var(--error)' }}>*</span></label>
+                    <div className="relative mt-1">
+                      <Lock className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4" style={{ color: 'var(--text-muted)' }} />
+                      <input
+                        type={showRegisterConfirmPassword ? 'text' : 'password'}
+                        value={registerForm.confirm_password ?? ''}
+                        onChange={(e) => updateRegisterField('confirm_password', e.target.value)}
+                        placeholder="Re-enter password"
+                        className="theme-input w-full pl-9 pr-10 py-2 rounded-lg text-sm focus:outline-none"
+                        style={registerErrors.confirm_password ? { borderColor: 'var(--error)' } : undefined}
+                      />
+                      <button
+                        type="button"
+                        onClick={() => setShowRegisterConfirmPassword((v) => !v)}
+                        className="absolute right-3 top-1/2 -translate-y-1/2"
+                        style={{ color: 'var(--text-muted)' }}
+                        tabIndex={-1}
+                      >
+                        {showRegisterConfirmPassword ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
+                      </button>
+                    </div>
+                    {registerErrors.confirm_password && <p className="text-[10px] mt-1" style={{ color: 'var(--error)' }}>{registerErrors.confirm_password}</p>}
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            <div className="flex gap-3 mt-6">
+              <button onClick={closeRegisterDialog} disabled={isRegistering} className="flex-1 px-4 py-2.5 rounded-lg text-sm font-semibold" style={{ backgroundColor: 'var(--card-inner)', color: 'var(--text-secondary)' }}>
+                Cancel
+              </button>
+              <button
+                onClick={handleRegisterClient}
+                disabled={isRegistering}
+                className="flex-1 px-4 py-2.5 rounded-lg text-sm font-semibold text-white"
+                style={{ backgroundColor: 'var(--primary)', opacity: isRegistering ? 0.7 : 1 }}
+              >
+                {isRegistering ? 'Registering...' : 'Register'}
               </button>
             </div>
           </div>
@@ -850,29 +1411,10 @@ export const ClientManagementClients: React.FC = () => {
                 <p className="text-[10px] mt-1" style={{ color: 'var(--text-muted)' }}>Defaults to Success Price. Edit if needed.</p>
               </div>
 
-              <div>
-                <label className="text-sm font-medium" style={{ color: 'var(--text-secondary)' }}>Request Limit</label>
-                <input
-                  type="number"
-                  value={assignLimit}
-                  onChange={(e) => setAssignLimit(Number(e.target.value))}
-                  min={1}
-                  className="theme-input w-full px-3 py-2.5 rounded-lg text-sm focus:outline-none mt-1"
-                />
-              </div>
-
-              <div>
-                <label className="text-sm font-medium" style={{ color: 'var(--text-secondary)' }}>Duration</label>
-                <select
-                  value={assignFrequency}
-                  onChange={(e) => setAssignFrequency(e.target.value as RequestLimitFrequency)}
-                  className="theme-input w-full px-3 py-2.5 rounded-lg text-sm focus:outline-none mt-1"
-                >
-                  {(['Per Minute', 'Per Hour', 'Per Day', 'Per Month', 'Per Year'] as const).map((f) => (
-                    <option key={f} value={f}>{f}</option>
-                  ))}
-                </select>
-              </div>
+              <p className="text-xs px-3 py-2 rounded-lg" style={{ backgroundColor: 'var(--card-inner)', color: 'var(--text-muted)' }}>
+                Uses the client&apos;s universal API key and daily request limit from API Access Profile
+                ({(apiProfile?.request_limit ?? editProfileLimit).toLocaleString()} / day).
+              </p>
 
               <div>
                 <label className="text-sm font-medium" style={{ color: 'var(--text-secondary)' }}>Status</label>

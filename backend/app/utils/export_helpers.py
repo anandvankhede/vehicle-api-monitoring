@@ -14,7 +14,7 @@ Row = Sequence[Union[str, int, float, None]]
 
 def _escape_tsv(value: Any) -> str:
     return str(value if value is not None else "").replace("\t", " ").replace("\r", " ").replace("\n", " ")
-
+                                              
 
 def encode_tabular_export(
     headers: List[str],

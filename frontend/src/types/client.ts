@@ -100,6 +100,25 @@ export interface Client {
   created_at: string;
   updated_at: string;
   visible_password?: string;
+  api_key?: string;
+  request_limit?: number;
+  current_usage?: number;
+  api_profile_assigned_by?: string;
+  api_profile_created_at?: string;
+}
+
+export interface ClientApiProfile {
+  client_id: string;
+  api_key: string;
+  username: string;
+  status: string;
+  used: number;
+  lifetimeUsed: number;
+  limit_frequency: string;
+  assigned_by: string;
+  request_limit: number;
+  api_list: string;
+  redis_synced: boolean;
 }
 
 export interface ClientUser {

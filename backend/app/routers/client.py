@@ -33,6 +33,9 @@ from app.schemas.client import (
     PasswordResetRequest,
     ClientUsageSummary,
     ClientBillingSummary,
+    ClientApiProfileCreate,
+    ClientApiProfileUpdate,
+    ClientApiProfileRead,
 )
 from app.schemas.common import BaseResponse, ErrorResponse, PaginationMetadata
 from app.services.client_service import ClientService
@@ -418,6 +421,74 @@ async def get_client_audit(
             status_code=status.HTTP_404_NOT_FOUND,
             detail="Client not found",
         )
+
+
+@router.get(
+    "/{client_id}/api-profile",
+    response_model=ClientApiProfileRead,
+    responses={404: {"model": ErrorResponse}, 401: {"model": ErrorResponse}},
+)
+async def get_client_api_profile(
+    client_id: str,
+    db=Depends(get_database),
+    _=Depends(get_current_admin),
+):
+    """Get universal API key profile for a client (if created)."""
+    result = await client_service.get_api_profile(db, client_id)
+    if not result:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="API profile not found for this client",
+        )
+    return result
+
+
+@router.post(
+    "/{client_id}/api-profile",
+    response_model=ClientApiProfileRead,
+    responses={400: {"model": ErrorResponse}, 401: {"model": ErrorResponse}},
+)
+async def create_client_api_profile(
+    client_id: str,
+    body: ClientApiProfileCreate,
+    db=Depends(get_database),
+    admin=Depends(get_current_admin),
+):
+    """
+    Create universal API key + daily request limit for a client.
+    Writes Redis hash at client:{api_key} with empty api_list.
+    """
+    try:
+        assigned_by = admin.get("username", "admin")
+        return await client_service.create_api_profile(
+            db, client_id, body.request_limit, assigned_by
+        )
+    except ValueError as e:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
+
+
+@router.put(
+    "/{client_id}/api-profile",
+    response_model=ClientApiProfileRead,
+    responses={400: {"model": ErrorResponse}, 401: {"model": ErrorResponse}},
+)
+async def update_client_api_profile(
+    client_id: str,
+    body: ClientApiProfileUpdate,
+    db=Depends(get_database),
+    _=Depends(get_current_admin),
+):
+    """Update daily request limit, API key, and/or Redis profile status (active/inactive)."""
+    try:
+        return await client_service.update_api_profile(
+            db,
+            client_id,
+            request_limit=body.request_limit,
+            api_key=body.api_key,
+            status=body.status,
+        )
+    except ValueError as e:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
 
 
 @router.post(

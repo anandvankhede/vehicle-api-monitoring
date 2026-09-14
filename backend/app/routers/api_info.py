@@ -21,6 +21,10 @@ from app.services.api_collections import (
     get_live_response_api_names,
     is_catalog_api_name,
 )
+from app.services.redis_api_key_mapping import (
+    normalize_redis_api_key,
+    resync_redis_api_list_for_api_name,
+)
 
 router = APIRouter(prefix="/api-info", tags=["API Catalog"])
 
@@ -66,6 +70,11 @@ class ApiCreateRequest(BaseModel):
     pricing_not_found: float = Field(default=0.5, ge=0, description="Price per not-found hit")
     currency: str = Field(default="INR", description="Currency for pricing")
     documentation: Optional[str] = Field(default=None, description="Documentation URL or markdown")
+    redis_api_key: Optional[str] = Field(
+        default=None,
+        max_length=100,
+        description="Gateway key for Redis api_list (e.g. rc_to_mob). Defaults to API name.",
+    )
 
 
 class ApiUpdateRequest(BaseModel):
@@ -83,6 +92,11 @@ class ApiUpdateRequest(BaseModel):
     pricing_not_found: Optional[float] = Field(None, ge=0)
     currency: Optional[str] = None
     documentation: Optional[str] = None
+    redis_api_key: Optional[str] = Field(
+        default=None,
+        max_length=100,
+        description="Gateway key for Redis api_list (e.g. rc_to_mob). Empty clears override.",
+    )
 
 
 @router.get(
@@ -172,6 +186,13 @@ async def create_api(
             detail=f"API with name '{api_name}' already exists.",
         )
 
+    redis_api_key = None
+    try:
+        if body.redis_api_key:
+            redis_api_key = normalize_redis_api_key(body.redis_api_key)
+    except ValueError as e:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
+
     now = datetime.now(timezone.utc)
     doc = {
         "name": api_name,
@@ -191,6 +212,8 @@ async def create_api(
         "created_at": now,
         "updated_at": now,
     }
+    if redis_api_key:
+        doc["redis_api_key"] = redis_api_key
     await db["apis"].insert_one(doc)
     return BaseResponse(success=True, message="API created successfully.")
 
@@ -247,10 +270,25 @@ async def update_api(
     if "method" in update_data:
         update_data["method"] = update_data["method"].upper()
 
+    if "redis_api_key" in update_data:
+        raw = update_data["redis_api_key"]
+        try:
+            if raw is None or (isinstance(raw, str) and not raw.strip()):
+                update_data["redis_api_key"] = None
+            else:
+                update_data["redis_api_key"] = normalize_redis_api_key(str(raw))
+        except ValueError as e:
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
+
     await db["apis"].update_one(
         {"_id": ObjectId(api_id)},
         {"$set": update_data},
     )
+
+    if "redis_api_key" in update_data:
+        api_name = update_data.get("name") or existing.get("name")
+        if api_name:
+            await resync_redis_api_list_for_api_name(db, api_name)
 
     return BaseResponse(success=True, message="API updated successfully.")
 

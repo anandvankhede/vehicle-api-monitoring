@@ -110,6 +110,28 @@ class DashboardService:
             "degraded_apis_count": degraded,
         }
 
+    async def get_dashboard_bootstrap(self, db, response_db=None):
+        """Single payload for dashboard initial load (stats + users + API list)."""
+        from app.database import db_manager
+
+        summary = await self.get_dashboard_stats(db, response_db=response_db)
+        user_options = await self.get_user_options(db)
+        api_options = await self.get_api_options(
+            db, client_id="all", response_db=response_db,
+        )
+        return {
+            "summary": {
+                "totalClients": summary["total_clients"],
+                "totalApis": summary["total_apis"],
+                "healthyApisCount": summary["healthy_apis_count"],
+                "degradedApisCount": summary["degraded_apis_count"],
+                "responseDbAvailable": db_manager.response_db_ready,
+                "responseDbDegraded": db_manager.response_db_degraded,
+            },
+            "userOptions": user_options,
+            "apiOptions": api_options,
+        }
+
     # ------------------------------------------------------------------
     # User options (clients for the dashboard filter dropdown)
     # ------------------------------------------------------------------
@@ -478,7 +500,7 @@ class DashboardService:
             "client_name": client.get("company_name", "Unknown"),
             "time_filter": time_filter,
             "apis": apis_data,
-        }
+        }                       
 
     # ------------------------------------------------------------------
     # API usage stats

@@ -51,7 +51,7 @@ async def create_audit_log(
     body: dict,
     db=Depends(get_database),
     user=Depends(get_current_admin),
-):
+):                
     """
     Create a new audit log entry.
 
